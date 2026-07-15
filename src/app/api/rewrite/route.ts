@@ -1,4 +1,5 @@
 import { rateLimit } from "@/lib/rate-limit";
+import { rollCheck } from "@/lib/checks";
 import { streamProviderRewrite } from "@/lib/provider-stream";
 import type { RewriteEvent } from "@/lib/types";
 import { rewriteRequestSchema } from "@/lib/validation";
@@ -26,6 +27,7 @@ export async function POST(request: Request) {
 
   try {
     const payload = rewriteRequestSchema.parse(await request.json());
+    const checkResult = payload.check.enabled ? rollCheck(payload.check) : undefined;
     const encoder = new TextEncoder();
     const abortController = new AbortController();
     request.signal.addEventListener("abort", () => abortController.abort(), {
@@ -40,6 +42,10 @@ export async function POST(request: Request) {
           controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
         };
 
+        if (checkResult) {
+          send({ type: "check_resolved", result: checkResult });
+        }
+
         await Promise.all(
           payload.providers.map(async (provider) => {
             send({
@@ -53,6 +59,7 @@ export async function POST(request: Request) {
                 payload.text,
                 payload.style,
                 abortController.signal,
+                checkResult,
               )) {
                 send({
                   type: "provider_delta",

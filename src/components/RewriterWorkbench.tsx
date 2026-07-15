@@ -1,12 +1,17 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
+import { CheckPanel } from "@/components/checks/CheckPanel";
+import { useRewriteStream } from "@/hooks/useRewriteStream";
+import {
+  CHECK_SKILLS,
+  DEFAULT_CHECK_REQUEST,
+  type CheckRequest,
+} from "@/lib/checks-shared";
 import { STYLE_PRESETS } from "@/lib/styles";
 import type {
-  ProviderOutput,
   ProviderRequest,
   PublicProvider,
-  RewriteEvent,
   StyleId,
 } from "@/lib/types";
 
@@ -21,9 +26,7 @@ const SAMPLES = [
   "我站在门口，想起那封一直没有寄出的信。",
 ];
 
-const CHANNELS = ["逻辑", "共情", "直觉", "镇定", "反应", "想象"];
-
-function statusLabel(status: ProviderOutput["status"]) {
+function statusLabel(status: "idle" | "streaming" | "done" | "error") {
   if (status === "streaming") return "接收中";
   if (status === "done") return "已完成";
   if (status === "error") return "调用失败";
@@ -40,16 +43,24 @@ export function RewriterWorkbench({
   const [providers, setProviders] = useState<ClientProvider[]>(initialProviders);
   const [selectedIds, setSelectedIds] = useState<string[]>(["mock"]);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
-  const [outputs, setOutputs] = useState<Record<string, ProviderOutput>>({});
-  const [resultOrder, setResultOrder] = useState<string[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState("");
+  const [check, setCheck] = useState<CheckRequest>(DEFAULT_CHECK_REQUEST);
   const [showCustom, setShowCustom] = useState(false);
   const [customLabel, setCustomLabel] = useState("");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [customModel, setCustomModel] = useState("");
   const [customApiKey, setCustomApiKey] = useState("");
-  const abortRef = useRef<AbortController | null>(null);
+  const {
+    outputs,
+    resultOrder,
+    isGenerating,
+    error,
+    setError,
+    checkResult,
+    diceState,
+    generate: generateStream,
+    stop,
+    clearCheckResult,
+  } = useRewriteStream();
 
   const selectedProviders = useMemo(
     () =>
@@ -63,6 +74,7 @@ export function RewriterWorkbench({
 
   function toggleProvider(id: string) {
     setError("");
+    clearCheckResult();
     setSelectedIds((current) => {
       if (current.includes(id)) {
         if (current.length === 1) {
@@ -103,6 +115,7 @@ export function RewriterWorkbench({
     };
     setProviders((current) => [...current, provider]);
     setSelectedIds((current) => [...current, id]);
+    clearCheckResult();
     setCustomLabel("");
     setCustomBaseUrl("");
     setCustomModel("");
@@ -111,57 +124,11 @@ export function RewriterWorkbench({
   }
 
   function removeCustomProvider(id: string) {
+    clearCheckResult();
     setProviders((current) => current.filter((provider) => provider.id !== id));
     setSelectedIds((current) => {
       const next = current.filter((item) => item !== id);
       return next.length > 0 ? next : ["mock"];
-    });
-  }
-
-  function parseEvent(line: string) {
-    if (!line.trim()) return;
-    const event = JSON.parse(line) as RewriteEvent;
-    setOutputs((current) => {
-      const previous = current[event.providerId] || {
-        label: event.providerId,
-        text: "",
-        status: "idle" as const,
-      };
-
-      if (event.type === "provider_start") {
-        return {
-          ...current,
-          [event.providerId]: {
-            label: event.label,
-            text: "",
-            status: "streaming",
-          },
-        };
-      }
-      if (event.type === "provider_delta") {
-        return {
-          ...current,
-          [event.providerId]: {
-            ...previous,
-            text: previous.text + event.delta,
-            status: "streaming",
-          },
-        };
-      }
-      if (event.type === "provider_done") {
-        return {
-          ...current,
-          [event.providerId]: { ...previous, status: "done" },
-        };
-      }
-      return {
-        ...current,
-        [event.providerId]: {
-          ...previous,
-          status: "error",
-          error: event.message,
-        },
-      };
     });
   }
 
@@ -181,60 +148,7 @@ export function RewriterWorkbench({
       model: provider.model,
     }));
 
-    const order = requests.map((provider) => provider.id);
-    setResultOrder(order);
-    setOutputs(
-      Object.fromEntries(
-        requests.map((provider) => [
-          provider.id,
-          { label: provider.label, text: "", status: "idle" },
-        ]),
-      ),
-    );
-    setIsGenerating(true);
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      const response = await fetch("/api/rewrite", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: source, style, providers: requests }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null);
-        throw new Error(payload?.error || `请求失败（${response.status}）`);
-      }
-      if (!response.body) throw new Error("服务器没有返回内容");
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value, { stream: !done });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) parseEvent(line);
-        if (done) break;
-      }
-      if (buffer.trim()) parseEvent(buffer);
-    } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === "AbortError") {
-        setError("生成已停止");
-      } else {
-        setError(requestError instanceof Error ? requestError.message : "生成失败");
-      }
-    } finally {
-      abortRef.current = null;
-      setIsGenerating(false);
-    }
-  }
-
-  function stop() {
-    abortRef.current?.abort();
+    await generateStream({ text: source, style, providers: requests, check });
   }
 
   async function copyOutput(id: string) {
@@ -244,15 +158,15 @@ export function RewriterWorkbench({
   }
 
   return (
-    <main className="shell">
+    <main className="shell" id="main-content">
       <aside className="channel-rail" aria-label="意识频道状态">
         <div className="rail-mark" aria-hidden="true">极乐</div>
         <div className="rail-line" aria-hidden="true" />
         <ol>
-          {CHANNELS.map((channel, index) => (
-            <li key={channel} className={isGenerating && index % 2 === 0 ? "active" : ""}>
+          {CHECK_SKILLS.map((channel, index) => (
+            <li key={channel.id} className={check.enabled && check.skill === channel.id ? "active" : ""}>
               <span>{String(index + 1).padStart(2, "0")}</span>
-              <b>{channel}</b>
+              <b>{channel.label}</b>
             </li>
           ))}
         </ol>
@@ -282,7 +196,10 @@ export function RewriterWorkbench({
                   role="radio"
                   aria-checked={style === preset.id}
                   className={style === preset.id ? "selected" : ""}
-                  onClick={() => setStyle(preset.id)}
+                  onClick={() => {
+                    setStyle(preset.id);
+                    clearCheckResult();
+                  }}
                   disabled={isGenerating}
                 >
                   {preset.shortLabel}
@@ -295,7 +212,7 @@ export function RewriterWorkbench({
           <div className="control-group provider-control">
             <div className="provider-heading">
               <span className="control-label">模型线路 · {selectedIds.length}/3</span>
-              <button type="button" className="text-button" onClick={() => setShowCustom((value) => !value)}>
+              <button type="button" className="text-button" onClick={() => setShowCustom((value) => !value)} disabled={isGenerating}>
                 {showCustom ? "收起自定义" : "+ 自定义线路"}
               </button>
             </div>
@@ -307,6 +224,8 @@ export function RewriterWorkbench({
                     <label>
                       <input
                         type="checkbox"
+                        name="provider"
+                        value={provider.id}
                         checked={selected}
                         onChange={() => toggleProvider(provider.id)}
                         disabled={isGenerating}
@@ -322,6 +241,7 @@ export function RewriterWorkbench({
                         type="button"
                         className="remove-provider"
                         onClick={() => removeCustomProvider(provider.id)}
+                        disabled={isGenerating}
                         aria-label={`移除 ${provider.label}`}
                       >
                         ×
@@ -341,21 +261,21 @@ export function RewriterWorkbench({
           <section className="custom-provider" aria-label="添加自定义供应商">
             <div>
               <label htmlFor="custom-label">显示名称</label>
-              <input id="custom-label" value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="例如 Moonshot" />
+              <input id="custom-label" name="custom-label" value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="例如 Moonshot…" autoComplete="off" disabled={isGenerating} />
             </div>
             <div>
               <label htmlFor="custom-url">OpenAI 兼容接口地址</label>
-              <input id="custom-url" value={customBaseUrl} onChange={(event) => setCustomBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" />
+              <input id="custom-url" name="custom-url" type="url" value={customBaseUrl} onChange={(event) => setCustomBaseUrl(event.target.value)} placeholder="https://api.example.com/v1…" autoComplete="off" disabled={isGenerating} />
             </div>
             <div>
               <label htmlFor="custom-model">模型名称</label>
-              <input id="custom-model" value={customModel} onChange={(event) => setCustomModel(event.target.value)} placeholder="model-name" />
+              <input id="custom-model" name="custom-model" value={customModel} onChange={(event) => setCustomModel(event.target.value)} placeholder="model-name…" autoComplete="off" spellCheck={false} disabled={isGenerating} />
             </div>
             <div>
               <label htmlFor="custom-key">临时接口密钥</label>
-              <input id="custom-key" type="password" value={customApiKey} onChange={(event) => setCustomApiKey(event.target.value)} placeholder="仅保存在当前页面内存" autoComplete="off" />
+              <input id="custom-key" name="custom-key" type="password" value={customApiKey} onChange={(event) => setCustomApiKey(event.target.value)} placeholder="仅保存在当前页面内存…" autoComplete="off" spellCheck={false} disabled={isGenerating} />
             </div>
-            <button type="button" className="add-provider" onClick={addCustomProvider}>接入线路</button>
+            <button type="button" className="add-provider" onClick={addCustomProvider} disabled={isGenerating}>接入线路</button>
           </section>
         ) : null}
 
@@ -368,17 +288,31 @@ export function RewriterWorkbench({
                   <span>{provider.label} 临时密钥</span>
                   <input
                     type="password"
+                    name={`api-key-${provider.id}`}
                     value={apiKeys[provider.id] || ""}
                     onChange={(event) =>
                       setApiKeys((current) => ({ ...current, [provider.id]: event.target.value }))
                     }
-                    placeholder="不会写入浏览器存储或日志"
+                    placeholder="不会写入浏览器存储或日志…"
                     autoComplete="off"
+                    spellCheck={false}
+                    disabled={isGenerating}
                   />
                 </label>
               ))}
           </section>
         ) : null}
+
+        <CheckPanel
+          value={check}
+          onChange={(next) => {
+            setCheck(next);
+            clearCheckResult();
+          }}
+          disabled={isGenerating}
+          diceState={diceState}
+          result={checkResult}
+        />
 
         <section className="work-surface">
           <div className="input-pane">
@@ -392,8 +326,13 @@ export function RewriterWorkbench({
               </span>
             </div>
             <textarea
+              name="source-text"
+              autoComplete="off"
               value={text}
-              onChange={(event) => setText(event.target.value)}
+              onChange={(event) => {
+                setText(event.target.value);
+                clearCheckResult();
+              }}
               onKeyDown={(event) => {
                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                   event.preventDefault();
@@ -403,11 +342,15 @@ export function RewriterWorkbench({
               maxLength={1000}
               placeholder="把一句解释、一段对白，或一件难以启齿的小事留在这里……"
               aria-label="需要改写的原文"
+              disabled={isGenerating}
             />
             <div className="sample-row">
               <span>取样</span>
               {SAMPLES.map((sample, index) => (
-                <button key={sample} type="button" onClick={() => setText(sample)}>
+                <button key={sample} type="button" disabled={isGenerating} onClick={() => {
+                  setText(sample);
+                  clearCheckResult();
+                }}>
                   {String(index + 1).padStart(2, "0")}
                 </button>
               ))}
@@ -473,11 +416,11 @@ export function RewriterWorkbench({
           </div>
           {isGenerating ? (
             <button type="button" className="primary-action stop" onClick={stop}>
-              <span>停止接收</span><b>■</b>
+              <span>{check.enabled && diceState === "rolling" ? "正在判定 · 点击停止" : "停止接收"}</span><b>■</b>
             </button>
           ) : (
             <button type="button" className="primary-action" onClick={() => void generate()}>
-              <span>开始侧写</span><b>↗</b>
+              <span>{check.enabled ? "投骰并开始侧写" : "开始侧写"}</span><b>↗</b>
             </button>
           )}
         </footer>

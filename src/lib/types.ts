@@ -1,3 +1,5 @@
+import type { CheckResult } from "./checks-shared";
+
 export const STYLE_IDS = [
   "psycho_noir",
   "dark_humor",
@@ -25,6 +27,7 @@ export type ProviderRequest = {
 };
 
 export type RewriteEvent =
+  | { type: "check_resolved"; result: CheckResult }
   | { type: "provider_start"; providerId: string; label: string }
   | { type: "provider_delta"; providerId: string; delta: string }
   | { type: "provider_done"; providerId: string }

@@ -1,14 +1,15 @@
 import type { StyleId } from "./types";
+import { getCheckSkill, type CheckResult } from "./checks-shared";
 import { resolveProvider } from "./provider-config";
 import {
+  buildCompressionPrompt,
   buildRewritePrompt,
   isRewriteLengthValid,
-  rewriteLengthRange,
   rewriteTokenBudget,
 } from "./styles";
 import type { ProviderRequest } from "./types";
 
-function mockRewrite(text: string, style: StyleId) {
+function mockRewrite(text: string, style: StyleId, check?: CheckResult) {
   const lines: Record<StyleId, [string, string]> = {
     psycho_noir: [
       "雨水在窗外清点城市的旧账。",
@@ -28,11 +29,12 @@ function mockRewrite(text: string, style: StyleId) {
     ],
   };
   const [opening, bridge] = lines[style];
-  return `${opening}\n\n${bridge}${text}\n\n这句话仍然属于你，只是现在，它学会了回望。`;
+  const checkPrefix = check ? `${getCheckSkill(check.skill).mock[check.outcome]}\n\n` : "";
+  return `${checkPrefix}${opening}\n\n${bridge}${text}\n\n这句话仍然属于你，只是现在，它学会了回望。`;
 }
 
-async function* streamMock(text: string, style: StyleId) {
-  const output = mockRewrite(text, style);
+async function* streamMock(text: string, style: StyleId, check?: CheckResult) {
+  const output = mockRewrite(text, style, check);
   for (let index = 0; index < output.length; index += 5) {
     await new Promise((resolve) => setTimeout(resolve, 8));
     yield output.slice(index, index + 5);
@@ -73,17 +75,19 @@ async function* streamSseResponse(response: Response) {
       if (!line.startsWith("data:")) continue;
       const data = line.slice(5).trim();
       if (!data || data === "[DONE]") continue;
+      let payload;
       try {
-        const payload = JSON.parse(data);
-        const delta = payload?.choices?.[0]?.delta?.content;
-        if (typeof delta === "string" && delta) {
-          yield delta;
-        }
-        if (payload?.choices?.[0]?.finish_reason === "length") {
-          throw new Error("模型输出达到长度上限，请重试或缩短原文");
-        }
+        payload = JSON.parse(data);
       } catch {
         // Ignore heartbeat or provider-specific non-JSON SSE frames.
+        continue;
+      }
+      const delta = payload?.choices?.[0]?.delta?.content;
+      if (typeof delta === "string" && delta) {
+        yield delta;
+      }
+      if (payload?.choices?.[0]?.finish_reason === "length") {
+        throw new Error("模型输出达到长度上限，请重试或缩短原文");
       }
     }
 
@@ -140,21 +144,6 @@ async function collectRemoteRewrite(
   return { content: content.trim(), truncated };
 }
 
-function buildCompressionPrompt(source: string, draft: string) {
-  const { sourceLength, minimumLength, maximumLength } = rewriteLengthRange(source);
-  return [
-    "你是一名严格的中文文字编辑。下面的改写草稿过长，需要压缩，但不得改变或新增事实。",
-    `原文约 ${sourceLength} 字；最终正文必须为 ${minimumLength} 至 ${maximumLength} 字。`,
-    "保留关键意象与叙事风格，删除重复描写；只输出压缩后的正文，不要解释。",
-    "<source_text>",
-    source,
-    "</source_text>",
-    "<draft>",
-    draft,
-    "</draft>",
-  ].join("\n");
-}
-
 async function* yieldBufferedText(content: string) {
   for (let index = 0; index < content.length; index += 8) {
     yield content.slice(index, index + 8);
@@ -166,17 +155,18 @@ export async function* streamProviderRewrite(
   text: string,
   style: StyleId,
   signal: AbortSignal,
+  check?: CheckResult,
 ) {
   const provider = resolveProvider(request);
   if (provider.mock) {
-    yield* streamMock(text, style);
+    yield* streamMock(text, style, check);
     return;
   }
 
   const targetBudget = rewriteTokenBudget(text);
   const firstAttempt = await collectRemoteRewrite(
     provider,
-    [{ role: "user", content: buildRewritePrompt(text, style) }],
+    [{ role: "user", content: buildRewritePrompt(text, style, check) }],
     Math.min(1600, Math.max(800, targetBudget * 4)),
     0.65,
     signal,
@@ -192,7 +182,7 @@ export async function* streamProviderRewrite(
 
   const secondAttempt = await collectRemoteRewrite(
     provider,
-    [{ role: "user", content: buildCompressionPrompt(text, firstAttempt.content) }],
+    [{ role: "user", content: buildCompressionPrompt(text, firstAttempt.content, check) }],
     Math.min(1400, targetBudget + 100),
     0.2,
     signal,
