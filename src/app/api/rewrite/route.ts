@@ -1,6 +1,6 @@
 import { rateLimit } from "@/lib/rate-limit";
 import { rollCheck } from "@/lib/checks";
-import { streamProviderRewrite } from "@/lib/provider-stream";
+import { publicProviderError, streamProviderRewrite } from "@/lib/provider-stream";
 import type { RewriteEvent } from "@/lib/types";
 import { rewriteRequestSchema } from "@/lib/validation";
 import { ZodError } from "zod";
@@ -69,11 +69,12 @@ export async function POST(request: Request) {
               }
               send({ type: "provider_done", providerId: provider.id });
             } catch (error) {
+              const safe = publicProviderError(error);
               send({
                 type: "provider_error",
                 providerId: provider.id,
-                message:
-                  error instanceof Error ? error.message : "模型调用失败",
+                message: safe.message,
+                code: safe.code,
               });
             }
           }),

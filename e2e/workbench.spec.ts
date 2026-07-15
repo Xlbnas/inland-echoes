@@ -144,6 +144,20 @@ test("supports keyboard generation and clears stale results after editing", asyn
   await expect(page.getByTestId("dice-pair")).toHaveAttribute("data-state", "idle");
 });
 
+test("replaces the typewriter buffer on consecutive generations", async ({ page }) => {
+  await page.goto("/");
+  const source = page.getByLabel("需要改写的原文");
+  await source.fill("第一份记录。");
+  await page.getByRole("button", { name: "开始侧写" }).click();
+  await expect(page.locator('.result[data-state="done"]')).toContainText("第一份记录。");
+
+  await source.fill("第二份记录。");
+  await page.getByRole("button", { name: "开始侧写" }).click();
+  const result = page.locator('.result[data-state="done"]');
+  await expect(result).toContainText("第二份记录。");
+  await expect(result).not.toContainText("第一份记录。");
+});
+
 test("stops an in-flight request and restores the primary action", async ({ page }) => {
   await page.goto("/");
   const source = page.getByLabel("需要改写的原文");

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { CheckPanel } from "@/components/checks/CheckPanel";
 import { PageIntro } from "@/components/motion/PageIntro";
+import { RewriteResultCard } from "@/components/RewriteResultCard";
 import { useRewriteStream } from "@/hooks/useRewriteStream";
 import {
   CHECK_SKILLS,
@@ -26,7 +27,6 @@ import {
   introTitleVariants,
   MECHANICAL_SPRING,
   MOTION_DURATION,
-  MOTION_EASE,
 } from "@/lib/motion";
 import { STYLE_PRESETS } from "@/lib/styles";
 import type {
@@ -45,13 +45,6 @@ const SAMPLES = [
   "会议结束了，但没有人真正得到答案。",
   "我站在门口，想起那封一直没有寄出的信。",
 ];
-
-function statusLabel(status: "idle" | "streaming" | "done" | "error") {
-  if (status === "streaming") return "接收中";
-  if (status === "done") return "已完成";
-  if (status === "error") return "调用失败";
-  return "待命";
-}
 
 export function RewriterWorkbench({
   initialProviders,
@@ -84,6 +77,7 @@ export function RewriterWorkbench({
     generate: generateStream,
     stop,
     clearCheckResult,
+    markDisplayDone,
   } = useRewriteStream();
 
   useEffect(() => () => {
@@ -181,7 +175,7 @@ export function RewriterWorkbench({
   }
 
   async function copyOutput(id: string) {
-    const output = outputs[id]?.text;
+    const output = outputs[id]?.receivedText;
     if (!output) return;
     try {
       await navigator.clipboard.writeText(output);
@@ -445,7 +439,7 @@ export function RewriterWorkbench({
             <span>改写</span>
           </m.div>
 
-          <m.div className="output-pane" aria-live="polite" variants={introSurfacePartVariants} custom={1}>
+          <m.div className="output-pane" variants={introSurfacePartVariants} custom={1}>
             <div className="pane-heading">
               <div>
                 <span className="pane-index">乙</span>
@@ -468,47 +462,7 @@ export function RewriterWorkbench({
                   const output = outputs[id];
                   if (!output) return null;
                   const copied = copiedId === id;
-                  return (
-                    <m.article
-                      className={`result ${output.status}`}
-                      key={id}
-                      data-state={output.status}
-                      initial={reduceMotion ? false : { opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{
-                        duration: reduceMotion ? 0.08 : MOTION_DURATION.base,
-                        delay: reduceMotion ? 0 : index * 0.05,
-                        ease: MOTION_EASE.enter,
-                      }}
-                    >
-                      <header>
-                        <div>
-                          <span>{output.label}</span>
-                          <small>{statusLabel(output.status)}</small>
-                        </div>
-                        <button type="button" onClick={() => void copyOutput(id)} disabled={!output.text}>
-                          <span className="copy-label">
-                            <AnimatePresence initial={false} mode="wait">
-                              <m.span
-                                key={copied ? "copied" : "copy"}
-                                initial={reduceMotion ? false : { opacity: 0, y: 2 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={reduceMotion ? undefined : { opacity: 0, y: -2 }}
-                                transition={{ duration: reduceMotion ? 0.08 : MOTION_DURATION.instant }}
-                              >
-                                {copied ? "已复制" : "复制"}
-                              </m.span>
-                            </AnimatePresence>
-                          </span>
-                        </button>
-                      </header>
-                      {output.error ? <p className="result-error">{output.error}</p> : null}
-                      <div className="result-text">
-                        {output.text || (output.status === "streaming" ? "正在建立语言模型连接…" : "")}
-                        {output.status === "streaming" ? <span className="cursor" aria-hidden="true" /> : null}
-                      </div>
-                    </m.article>
-                  );
+                  return <RewriteResultCard key={`${id}-${output.generation}`} id={id} output={output} index={index} copied={copied} onCopy={(providerId) => void copyOutput(providerId)} onDisplayDone={markDisplayDone} />;
                 })}
               </div>
             )}

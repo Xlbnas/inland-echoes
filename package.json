@@ -12,8 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "benchmark:siliconflow": "node --use-env-proxy --env-file-if-exists=.env.local scripts/benchmark-siliconflow.mjs",
-    "benchmark:siliconflow:dry": "node --use-env-proxy --env-file-if-exists=.env.local scripts/benchmark-siliconflow.mjs --dry-run",
+    "benchmark:siliconflow": "node --use-env-proxy --env-file-if-exists=.env.local --import tsx scripts/benchmark-siliconflow-quality.ts",
+    "benchmark:siliconflow:quality": "node --use-env-proxy --env-file-if-exists=.env.local --import tsx scripts/benchmark-siliconflow-quality.ts",
     "check": "npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
@@ -33,6 +33,7 @@
     "eslint": "^9.39.1",
     "eslint-config-next": "^16.0.0",
     "tailwindcss": "^4.1.14",
+    "tsx": "^4.23.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.8"
   },

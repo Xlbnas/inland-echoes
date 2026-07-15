@@ -1,153 +1,196 @@
-import type { StyleId } from "./types";
 import { getCheckSkill, type CheckResult } from "./checks-shared";
 import { resolveProvider } from "./provider-config";
-import {
-  buildCompressionPrompt,
-  buildRewritePrompt,
-  isRewriteLengthValid,
-  rewriteTokenBudget,
-} from "./styles";
-import type { ProviderRequest } from "./types";
+import { buildRepairMessages, buildRewriteMessages, type RewriteMessage } from "./rewrite-prompts";
+import { validateRewriteQuality } from "./rewrite-quality";
+import { rewriteLengthRange } from "./rewrite-length";
+import type { ProviderRequest, StyleId } from "./types";
 
-function mockRewrite(text: string, style: StyleId, check?: CheckResult) {
-  const lines: Record<StyleId, [string, string]> = {
-    psycho_noir: [
-      "雨水在窗外清点城市的旧账。",
-      "事实没有改变，只是换了一件更沉的外套：",
-    ],
-    dark_humor: [
-      "命运敲了敲桌面，像个没有预约却坚持报销的办事员。",
-      "它郑重宣布：",
-    ],
-    inner_monologue: [
-      "【逻辑】先把事情说清楚。\n【直觉】清楚从来不是事实的唯一形状。",
-      "【共情】你真正想说的是：",
-    ],
-    lyrical: [
-      "光线慢慢越过房间，像一句还没有决定结尾的话。",
-      "我听见自己说：",
-    ],
-  };
-  const [opening, bridge] = lines[style];
-  const checkPrefix = check ? `${getCheckSkill(check.skill).mock[check.outcome]}\n\n` : "";
-  return `${checkPrefix}${opening}\n\n${bridge}${text}\n\n这句话仍然属于你，只是现在，它学会了回望。`;
-}
+export type RewriteErrorCode =
+  | "auth_error" | "rate_limited" | "upstream_timeout" | "upstream_unavailable"
+  | "empty_response" | "truncated_response" | "quality_contract_failed" | "user_aborted";
 
-async function* streamMock(text: string, style: StyleId, check?: CheckResult) {
-  const output = mockRewrite(text, style, check);
-  for (let index = 0; index < output.length; index += 5) {
-    await new Promise((resolve) => setTimeout(resolve, 8));
-    yield output.slice(index, index + 5);
+const PUBLIC_MESSAGES: Record<RewriteErrorCode, string> = {
+  auth_error: "线路鉴权失败，请检查 API 密钥",
+  rate_limited: "线路请求过多，请稍后重试",
+  upstream_timeout: "线路响应超时，请稍后重试",
+  upstream_unavailable: "线路暂时不可用，请稍后重试",
+  empty_response: "线路没有返回可用正文",
+  truncated_response: "线路输出被截断，请重试",
+  quality_contract_failed: "线路未能满足改写质量契约，请重试或更换模型",
+  user_aborted: "生成已停止",
+};
+
+export class RewriteProviderError extends Error {
+  constructor(
+    public readonly code: RewriteErrorCode,
+    public readonly retryable = false,
+    public readonly details?: { violations?: string[]; output?: string },
+  ) {
+    super(PUBLIC_MESSAGES[code]);
+    this.name = "RewriteProviderError";
   }
 }
 
-async function* streamSseResponse(response: Response) {
-  if (!response.body) {
-    throw new Error("模型接口没有返回内容");
-  }
+type ResolvedProvider = ReturnType<typeof resolveProvider>;
+type Completion = { content: string; truncated: boolean; usage?: Record<string, number>; finishReason?: string | null };
 
-  const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
+function classifyStatus(status: number) {
+  if ([400, 401, 403].includes(status)) return new RewriteProviderError("auth_error");
+  if (status === 429) return new RewriteProviderError("rate_limited", true);
+  return new RewriteProviderError("upstream_unavailable", [502, 503, 504].includes(status));
+}
+
+function abortError(signal: AbortSignal, timedOut: boolean) {
+  return new RewriteProviderError(signal.aborted && !timedOut ? "user_aborted" : "upstream_timeout");
+}
+
+async function parseCompletion(response: Response): Promise<Completion> {
+  if (!response.body) throw new RewriteProviderError("empty_response");
+  if ((response.headers.get("content-type") || "").includes("application/json")) {
     const payload = await response.json();
-    const content = payload?.choices?.[0]?.message?.content;
-    if (typeof content !== "string") {
-      throw new Error("模型接口返回格式无法识别");
-    }
-    yield content;
-    if (payload?.choices?.[0]?.finish_reason === "length") {
-      throw new Error("模型输出达到长度上限，请重试或缩短原文");
-    }
-    return;
+    return {
+      content: String(payload?.choices?.[0]?.message?.content || "").trim(),
+      truncated: payload?.choices?.[0]?.finish_reason === "length",
+      usage: payload?.usage,
+      finishReason: payload?.choices?.[0]?.finish_reason,
+    };
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-
+  let content = "";
+  let truncated = false;
+  let finishReason: string | null = null;
   while (true) {
     const { value, done } = await reader.read();
     buffer += decoder.decode(value, { stream: !done });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
+    const frames = buffer.split("\n");
+    buffer = frames.pop() || "";
+    for (const raw of frames) {
+      const line = raw.trim();
       if (!line.startsWith("data:")) continue;
       const data = line.slice(5).trim();
       if (!data || data === "[DONE]") continue;
-      let payload;
       try {
-        payload = JSON.parse(data);
+        const payload = JSON.parse(data);
+        const choice = payload?.choices?.[0];
+        if (typeof choice?.delta?.content === "string") content += choice.delta.content;
+        finishReason = choice?.finish_reason ?? finishReason;
+        if (choice?.finish_reason === "length") truncated = true;
       } catch {
-        // Ignore heartbeat or provider-specific non-JSON SSE frames.
-        continue;
-      }
-      const delta = payload?.choices?.[0]?.delta?.content;
-      if (typeof delta === "string" && delta) {
-        yield delta;
-      }
-      if (payload?.choices?.[0]?.finish_reason === "length") {
-        throw new Error("模型输出达到长度上限，请重试或缩短原文");
+        // Provider heartbeat frames are intentionally ignored.
       }
     }
-
     if (done) break;
   }
+  return { content: content.trim(), truncated, finishReason };
 }
 
-type ResolvedProvider = ReturnType<typeof resolveProvider>;
-
-async function collectRemoteRewrite(
+async function requestCompletion(
   provider: ResolvedProvider,
-  messages: Array<{ role: "user"; content: string }>,
+  messages: RewriteMessage[],
   maxTokens: number,
   temperature: number,
   signal: AbortSignal,
-) {
-  const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${provider.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: provider.model,
-      messages,
-      stream: true,
-      temperature,
-      max_tokens: maxTokens,
-      ...(provider.baseUrl.includes("siliconflow.cn") ? { enable_thinking: false } : {}),
-    }),
-    signal,
-  });
-
-  if (!response.ok) {
-    const body = (await response.text())
-      .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[REDACTED]")
-      .slice(0, 300);
-    throw new Error(`模型接口返回 ${response.status}${body ? `：${body}` : ""}`);
-  }
-
-  let content = "";
-  let truncated = false;
-  try {
-    for await (const delta of streamSseResponse(response)) {
-      content += delta;
+): Promise<Completion> {
+  const started = Date.now();
+  const totalDeadline = 110_000;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (signal.aborted) throw new RewriteProviderError("user_aborted");
+    const controller = new AbortController();
+    let timedOut = false;
+    const remaining = Math.max(1, totalDeadline - (Date.now() - started));
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, remaining);
+    const abort = () => controller.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      const response = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${provider.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: provider.model,
+          messages,
+          stream: true,
+          temperature,
+          max_tokens: maxTokens,
+          ...(provider.baseUrl.includes("siliconflow.cn") ? { enable_thinking: false } : {}),
+        }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const error = classifyStatus(response.status);
+        if (error.retryable && attempt === 0) {
+          const retryAfter = Number(response.headers.get("retry-after") || 0);
+          if (retryAfter > 0 && retryAfter <= 2) await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+          continue;
+        }
+        throw error;
+      }
+      return await parseCompletion(response);
+    } catch (error) {
+      if (error instanceof RewriteProviderError) throw error;
+      if (error instanceof DOMException && error.name === "AbortError") throw abortError(signal, timedOut);
+      if (attempt === 0) continue;
+      throw new RewriteProviderError("upstream_unavailable");
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
     }
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("达到长度上限")) {
-      truncated = true;
-    } else {
-      throw error;
-    }
   }
-  return { content: content.trim(), truncated };
+  throw new RewriteProviderError("upstream_unavailable");
 }
 
 async function* yieldBufferedText(content: string) {
-  for (let index = 0; index < content.length; index += 8) {
-    yield content.slice(index, index + 8);
+  const chars = Array.from(content);
+  for (let index = 0; index < chars.length; index += 24) yield chars.slice(index, index + 24).join("");
+}
+
+export type RewriteAttemptResult = { content: string; repaired: boolean; attempts: number; violations: string[] };
+
+export async function generateValidatedRewrite(
+  request: ProviderRequest,
+  text: string,
+  style: StyleId,
+  signal: AbortSignal,
+  check?: CheckResult,
+): Promise<RewriteAttemptResult> {
+  const provider = resolveProvider(request);
+  if (provider.mock) {
+    const prefix = check ? `${getCheckSkill(check.skill).mock[check.outcome]}\n\n` : "【逻辑：通过】先把事实留在原地。\n\n";
+    return {
+      content: `${prefix}${text}\n\n【直觉】它没有改变，只是在回声里显出另一层边缘。`,
+      repaired: false,
+      attempts: 1,
+      violations: [],
+    };
   }
+  const { maxTokens } = rewriteLengthRange(text);
+  const first = await requestCompletion(provider, buildRewriteMessages(text, style, check), maxTokens, 0.68, signal);
+  if (!first.content) throw new RewriteProviderError("empty_response");
+  const firstQuality = validateRewriteQuality(text, first.content, check, first.truncated);
+  if (firstQuality.valid) return { content: first.content, repaired: false, attempts: 1, violations: [] };
+  if (signal.aborted) throw new RewriteProviderError("user_aborted");
+
+  const codes = firstQuality.violations.map((item) => `${item.code}: ${item.message}`);
+  const repaired = await requestCompletion(
+    provider,
+    buildRepairMessages(text, first.content, style, codes, check),
+    maxTokens,
+    0.25,
+    signal,
+  );
+  if (!repaired.content) throw new RewriteProviderError("empty_response");
+  const repairedQuality = validateRewriteQuality(text, repaired.content, check, repaired.truncated);
+  if (!repairedQuality.valid) {
+    const repairedCodes = repairedQuality.violations.map((item) => `${item.code}: ${item.message}`);
+    throw new RewriteProviderError(
+      repaired.truncated ? "truncated_response" : "quality_contract_failed",
+      false,
+      { violations: repairedCodes, output: repaired.content },
+    );
+  }
+  return { content: repaired.content, repaired: true, attempts: 2, violations: codes };
 }
 
 export async function* streamProviderRewrite(
@@ -157,39 +200,11 @@ export async function* streamProviderRewrite(
   signal: AbortSignal,
   check?: CheckResult,
 ) {
-  const provider = resolveProvider(request);
-  if (provider.mock) {
-    yield* streamMock(text, style, check);
-    return;
-  }
+  const result = await generateValidatedRewrite(request, text, style, signal, check);
+  yield* yieldBufferedText(result.content);
+}
 
-  const targetBudget = rewriteTokenBudget(text);
-  const firstAttempt = await collectRemoteRewrite(
-    provider,
-    [{ role: "user", content: buildRewritePrompt(text, style, check) }],
-    Math.min(1600, Math.max(800, targetBudget * 4)),
-    0.65,
-    signal,
-  );
-
-  if (!firstAttempt.truncated && isRewriteLengthValid(text, firstAttempt.content)) {
-    yield* yieldBufferedText(firstAttempt.content);
-    return;
-  }
-  if (!firstAttempt.content) {
-    throw new Error("模型没有返回可用正文，请更换模型或重试");
-  }
-
-  const secondAttempt = await collectRemoteRewrite(
-    provider,
-    [{ role: "user", content: buildCompressionPrompt(text, firstAttempt.content, check) }],
-    Math.min(1400, targetBudget + 100),
-    0.2,
-    signal,
-  );
-
-  if (secondAttempt.truncated || !isRewriteLengthValid(text, secondAttempt.content)) {
-    throw new Error("模型未能满足长度约束，请重试或更换模型");
-  }
-  yield* yieldBufferedText(secondAttempt.content);
+export function publicProviderError(error: unknown) {
+  if (error instanceof RewriteProviderError) return { code: error.code, message: error.message };
+  return { code: "upstream_unavailable" as const, message: PUBLIC_MESSAGES.upstream_unavailable };
 }

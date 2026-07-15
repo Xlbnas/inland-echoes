@@ -14,7 +14,9 @@
 - Redis 限流；Redis 不可用时自动退回进程内限流
 - 自定义供应商 URL SSRF 基础防护
 - 响应式界面、键盘焦点、完整减少动效模式
-- 统一的“档案 / 信号 / 压印”动效系统，不对流式 token 逐字播放动画
+- 统一的“档案 / 信号 / 压印”动效系统；远端增量进入独立 Unicode 打字队列，不为每个字符创建 DOM 节点
+- 结构化 system/user 提示词、分长度合同、认知频道/判定结果质量校验与一次定向修复
+- 上游鉴权、限流、超时、不可用、空响应、截断与质量失败的稳定错误分类
 - 原创 SVG favicon 与 180×180 Apple Touch Icon
 - Docker 多阶段构建和 Docker Compose 一键启动
 
@@ -162,26 +164,29 @@ docker compose -p inland-echoes-verify ps
 docker compose -p inland-echoes-verify down --remove-orphans
 ```
 
-### SiliconFlow 模型性价比测试
+### SiliconFlow 生产质量基准
 
-测试工具使用两组固定中文改写样本，以相同参数并发测试多个候选模型，再由独立模型按事实保真、风格完成度、原创性、可读性和指令遵循进行盲评。报告只保存模型输出、延迟、令牌用量和估算费用，不记录请求头或接口密钥。
+基准直接复用生产 `buildRewriteMessages`、长度合同、质量校验、定向修复和生成参数。固定矩阵包含 12 个案例，每例 3 次（36 次真实生成），覆盖 1–1000 字、四种判定结果、六个认知频道和四种风格，并由 `SILICONFLOW_JUDGE_MODEL` 独立评审。并发固定为 2；报告保存正文、延迟、修复情况、违规项和评分，但不记录请求头或接口密钥。
 
 ```bash
-npm run benchmark:siliconflow:dry
-npm run benchmark:siliconflow
+npm run benchmark:siliconflow:quality
 ```
 
-密钥从已被 Git 忽略的 `.env.local` 读取，报告生成在同样被忽略的 `benchmark-results/`。价格快照来自 SiliconFlow 官方价格页，运行前应确认平台实时价格是否变化。
+密钥只从 `SILICONFLOW_API_KEY` 读取；可用 `SILICONFLOW_JUDGE_MODEL` 指定独立评审模型。报告生成在已被忽略的 `benchmark-results/`。
 
-2026-07-15 使用两组中文改写样本、生产用“生成后校验 + 必要时压缩”策略的结果：
+2026-07-15 对默认 `deepseek-ai/DeepSeek-V4-Flash` 完成 36 次全量实测：
 
-| 模型 | 盲评质量 | 严格成功率 | 平均延迟 | 100 次估算费用 |
-| --- | ---: | ---: | ---: | ---: |
-| DeepSeek-V4-Flash | 7.4 / 10 | 2 / 2 | 13.98 s | ¥0.0338 |
-| Qwen3.5-35B-A3B | 6.4 / 10 | 2 / 2 | 5.48 s | ¥0.0510 |
-| Qwen3.6-35B-A3B | 6.9 / 10 | 2 / 2 | 4.91 s | ¥0.2494 |
+| 指标 | 结果 | 验收门槛 |
+| --- | ---: | ---: |
+| 请求成功 / 本地合同通过 | 15 / 36（41.67%） | ≥ 95% / 100% |
+| 平均事实保真 | 6.07 / 10 | ≥ 9.0 |
+| 平均结果对齐 | 9.20 / 10 | ≥ 8.5 |
+| 平均频道结构 | 8.33 / 10 | ≥ 8.5 |
+| 平均心理对白感 | 6.67 / 10 | ≥ 8.0 |
+| 严重事实发明 | 2 | 0 |
+| 成功结果中触发修复 | 6 / 15 | 仅作观测 |
 
-因此默认使用 `deepseek-ai/DeepSeek-V4-Flash`：质量最高且估算费用最低；Qwen3.5 可作为更快的低价备选。DeepSeek-V3.2 文风优秀，但延迟和费用更高，且短文本长度遵循不稳定。样本量较小，生产决策前应加入真实业务文本复测。
+失败分类为 12 次 `quality_contract_failed`、8 次 `upstream_timeout` 和 1 次 `upstream_unavailable`。由于未达到严格门槛，生产“本地演示”线路仍保留，不能把该模型视为已验证的默认生产替代；后续应优先提高事实边界遵循、短文本长度稳定性和超长文本可用性，再完整重跑 36 次基准。
 
 ## 隐私与部署提示
 

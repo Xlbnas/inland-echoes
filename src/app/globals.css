@@ -1201,6 +1201,7 @@ button:disabled {
 }
 
 .result.streaming { border-color: var(--signal); }
+.result.stopped { border-color: color-mix(in srgb, var(--paper) 44%, transparent); }
 .result.done { border-color: var(--oxidized); }
 .result.error { border-color: var(--danger); }
 

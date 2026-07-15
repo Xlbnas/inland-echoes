@@ -31,11 +31,13 @@ export type RewriteEvent =
   | { type: "provider_start"; providerId: string; label: string }
   | { type: "provider_delta"; providerId: string; delta: string }
   | { type: "provider_done"; providerId: string }
-  | { type: "provider_error"; providerId: string; message: string };
+  | { type: "provider_error"; providerId: string; message: string; code?: string };
 
 export type ProviderOutput = {
   label: string;
-  text: string;
-  status: "idle" | "streaming" | "done" | "error";
+  generation: number;
+  receivedText: string;
+  networkDone: boolean;
+  status: "idle" | "streaming" | "done" | "error" | "stopped";
   error?: string;
 };
