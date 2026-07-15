@@ -1,13 +1,33 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { CheckPanel } from "@/components/checks/CheckPanel";
+import { PageIntro } from "@/components/motion/PageIntro";
 import { useRewriteStream } from "@/hooks/useRewriteStream";
 import {
   CHECK_SKILLS,
   DEFAULT_CHECK_REQUEST,
   type CheckRequest,
 } from "@/lib/checks-shared";
+import {
+  disclosureVariants,
+  introActionVariants,
+  introControlItemVariants,
+  introControlsVariants,
+  introEyebrowVariants,
+  introNoteVariants,
+  introRailChannelVariants,
+  introRailLineVariants,
+  introRailMarkVariants,
+  introRailVariants,
+  introSurfacePartVariants,
+  introSurfaceVariants,
+  introTitleVariants,
+  MECHANICAL_SPRING,
+  MOTION_DURATION,
+  MOTION_EASE,
+} from "@/lib/motion";
 import { STYLE_PRESETS } from "@/lib/styles";
 import type {
   ProviderRequest,
@@ -38,6 +58,7 @@ export function RewriterWorkbench({
 }: {
   initialProviders: PublicProvider[];
 }) {
+  const reduceMotion = useReducedMotion();
   const [text, setText] = useState("");
   const [style, setStyle] = useState<StyleId>("inner_monologue");
   const [providers, setProviders] = useState<ClientProvider[]>(initialProviders);
@@ -49,6 +70,9 @@ export function RewriterWorkbench({
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [customModel, setCustomModel] = useState("");
   const [customApiKey, setCustomApiKey] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const customToggleRef = useRef<HTMLButtonElement>(null);
+  const copyTimerRef = useRef<number | null>(null);
   const {
     outputs,
     resultOrder,
@@ -61,6 +85,10 @@ export function RewriterWorkbench({
     stop,
     clearCheckResult,
   } = useRewriteStream();
+
+  useEffect(() => () => {
+    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+  }, []);
 
   const selectedProviders = useMemo(
     () =>
@@ -120,6 +148,7 @@ export function RewriterWorkbench({
     setCustomBaseUrl("");
     setCustomModel("");
     setCustomApiKey("");
+    customToggleRef.current?.focus();
     setShowCustom(false);
   }
 
@@ -154,73 +183,117 @@ export function RewriterWorkbench({
   async function copyOutput(id: string) {
     const output = outputs[id]?.text;
     if (!output) return;
-    await navigator.clipboard.writeText(output);
+    try {
+      await navigator.clipboard.writeText(output);
+      setCopiedId(id);
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => {
+        setCopiedId(null);
+        copyTimerRef.current = null;
+      }, 1400);
+    } catch {
+      setCopiedId(null);
+      setError("复制失败，请选中文本后手动复制");
+    }
   }
 
   return (
-    <main className="shell" id="main-content">
-      <aside className="channel-rail" aria-label="意识频道状态">
-        <div className="rail-mark" aria-hidden="true">极乐</div>
-        <div className="rail-line" aria-hidden="true" />
+    <PageIntro>
+      <m.aside className="channel-rail" aria-label="意识频道状态" variants={introRailVariants}>
+        <m.div className="rail-mark" aria-hidden="true" variants={introRailMarkVariants}>极乐</m.div>
+        <m.div className="rail-line" aria-hidden="true" variants={introRailLineVariants} />
         <ol>
           {CHECK_SKILLS.map((channel, index) => (
-            <li key={channel.id} className={check.enabled && check.skill === channel.id ? "active" : ""}>
+            <m.li
+              key={channel.id}
+              className={check.enabled && check.skill === channel.id ? "active" : ""}
+              variants={introRailChannelVariants}
+              custom={index}
+              data-channel={channel.id}
+            >
               <span>{String(index + 1).padStart(2, "0")}</span>
               <b>{channel.label}</b>
-            </li>
+            </m.li>
           ))}
         </ol>
         <div className="rail-frequency" aria-hidden="true">88.4</div>
-      </aside>
+      </m.aside>
 
       <section className="workspace">
         <header className="masthead">
           <div>
-            <p className="eyebrow">极乐迪斯科文本侧写台 / 案卷 01</p>
-            <h1>极乐迪斯科｜内陆回声</h1>
+            <m.p className="eyebrow" variants={introEyebrowVariants}>极乐迪斯科文本侧写台 / 案卷 01</m.p>
+            <m.div className="title-reveal" variants={introTitleVariants}>
+              <h1>极乐迪斯科｜内陆回声</h1>
+            </m.div>
           </div>
-          <div className="masthead-note">
-            <span className="live-dot" />
+          <m.div className="masthead-note" variants={introNoteVariants}>
+            <span className="live-dot" aria-hidden="true" />
             <p>原意留在现场，语气负责留下指纹。</p>
-          </div>
+          </m.div>
         </header>
 
-        <section className="control-strip" aria-label="改写设置">
-          <div className="control-group style-control">
+        <m.section className="control-strip" aria-label="改写设置" variants={introControlsVariants}>
+          <m.div className="control-group style-control" variants={introControlItemVariants}>
             <span className="control-label">叙事频段</span>
             <div className="segmented" role="radiogroup" aria-label="选择改写风格">
-              {STYLE_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={style === preset.id}
-                  className={style === preset.id ? "selected" : ""}
-                  onClick={() => {
-                    setStyle(preset.id);
-                    clearCheckResult();
-                  }}
-                  disabled={isGenerating}
-                >
-                  {preset.shortLabel}
-                </button>
-              ))}
+              {STYLE_PRESETS.map((preset) => {
+                const selected = style === preset.id;
+                return (
+                  <m.button
+                    key={preset.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    className={selected ? "selected" : ""}
+                    onClick={() => {
+                      setStyle(preset.id);
+                      clearCheckResult();
+                    }}
+                    disabled={isGenerating}
+                    whileTap={isGenerating ? undefined : { y: 1 }}
+                  >
+                    <span>{preset.shortLabel}</span>
+                    {selected ? (
+                      <m.i
+                        className="style-indicator"
+                        layoutId="style-indicator"
+                        transition={MECHANICAL_SPRING}
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                  </m.button>
+                );
+              })}
             </div>
             <p>{selectedStyle.description}</p>
-          </div>
+          </m.div>
 
-          <div className="control-group provider-control">
+          <m.div className="control-group provider-control" variants={introControlItemVariants}>
             <div className="provider-heading">
               <span className="control-label">模型线路 · {selectedIds.length}/3</span>
-              <button type="button" className="text-button" onClick={() => setShowCustom((value) => !value)} disabled={isGenerating}>
-                {showCustom ? "收起自定义" : "+ 自定义线路"}
+              <button
+                ref={customToggleRef}
+                type="button"
+                className="text-button custom-toggle"
+                onClick={() => setShowCustom((value) => !value)}
+                disabled={isGenerating}
+                aria-expanded={showCustom}
+                aria-controls="custom-provider-fields"
+              >
+                <span className="custom-symbol" aria-hidden="true">{showCustom ? "−" : "+"}</span>
+                {showCustom ? "收起自定义" : "自定义线路"}
               </button>
             </div>
             <div className="provider-list">
               {providers.map((provider) => {
                 const selected = selectedIds.includes(provider.id);
                 return (
-                  <div key={provider.id} className={`provider-option ${selected ? "selected" : ""}`}>
+                  <div
+                    key={provider.id}
+                    className={`provider-option ${selected ? "selected" : ""}`}
+                    data-selected={selected}
+                  >
                     <label>
                       <input
                         type="checkbox"
@@ -254,30 +327,41 @@ export function RewriterWorkbench({
                 );
               })}
             </div>
-          </div>
-        </section>
+          </m.div>
+        </m.section>
 
-        {showCustom ? (
-          <section className="custom-provider" aria-label="添加自定义供应商">
-            <div>
-              <label htmlFor="custom-label">显示名称</label>
-              <input id="custom-label" name="custom-label" value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="例如 Moonshot…" autoComplete="off" disabled={isGenerating} />
-            </div>
-            <div>
-              <label htmlFor="custom-url">OpenAI 兼容接口地址</label>
-              <input id="custom-url" name="custom-url" type="url" value={customBaseUrl} onChange={(event) => setCustomBaseUrl(event.target.value)} placeholder="https://api.example.com/v1…" autoComplete="off" disabled={isGenerating} />
-            </div>
-            <div>
-              <label htmlFor="custom-model">模型名称</label>
-              <input id="custom-model" name="custom-model" value={customModel} onChange={(event) => setCustomModel(event.target.value)} placeholder="model-name…" autoComplete="off" spellCheck={false} disabled={isGenerating} />
-            </div>
-            <div>
-              <label htmlFor="custom-key">临时接口密钥</label>
-              <input id="custom-key" name="custom-key" type="password" value={customApiKey} onChange={(event) => setCustomApiKey(event.target.value)} placeholder="仅保存在当前页面内存…" autoComplete="off" spellCheck={false} disabled={isGenerating} />
-            </div>
-            <button type="button" className="add-provider" onClick={addCustomProvider} disabled={isGenerating}>接入线路</button>
-          </section>
-        ) : null}
+        <AnimatePresence initial={false}>
+          {showCustom ? (
+            <m.section
+              id="custom-provider-fields"
+              className="custom-provider"
+              aria-label="添加自定义供应商"
+              initial={reduceMotion ? false : "closed"}
+              animate="open"
+              exit="closed"
+              variants={disclosureVariants}
+              data-state="open"
+            >
+              <div>
+                <label htmlFor="custom-label">显示名称</label>
+                <input id="custom-label" name="custom-label" value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="例如 Moonshot…" autoComplete="off" disabled={isGenerating} />
+              </div>
+              <div>
+                <label htmlFor="custom-url">OpenAI 兼容接口地址</label>
+                <input id="custom-url" name="custom-url" type="url" value={customBaseUrl} onChange={(event) => setCustomBaseUrl(event.target.value)} placeholder="https://api.example.com/v1…" autoComplete="off" disabled={isGenerating} />
+              </div>
+              <div>
+                <label htmlFor="custom-model">模型名称</label>
+                <input id="custom-model" name="custom-model" value={customModel} onChange={(event) => setCustomModel(event.target.value)} placeholder="model-name…" autoComplete="off" spellCheck={false} disabled={isGenerating} />
+              </div>
+              <div>
+                <label htmlFor="custom-key">临时接口密钥</label>
+                <input id="custom-key" name="custom-key" type="password" value={customApiKey} onChange={(event) => setCustomApiKey(event.target.value)} placeholder="仅保存在当前页面内存…" autoComplete="off" spellCheck={false} disabled={isGenerating} />
+              </div>
+              <button type="button" className="add-provider" onClick={addCustomProvider} disabled={isGenerating}>接入线路</button>
+            </m.section>
+          ) : null}
+        </AnimatePresence>
 
         {selectedProviders.some((provider) => !provider.configured && provider.builtin) ? (
           <section className="credential-row" aria-label="临时 API 密钥">
@@ -314,8 +398,8 @@ export function RewriterWorkbench({
           result={checkResult}
         />
 
-        <section className="work-surface">
-          <div className="input-pane">
+        <m.section className="work-surface" variants={introSurfaceVariants}>
+          <m.div className="input-pane" variants={introSurfacePartVariants} custom={0}>
             <div className="pane-heading">
               <div>
                 <span className="pane-index">甲</span>
@@ -355,13 +439,13 @@ export function RewriterWorkbench({
                 </button>
               ))}
             </div>
-          </div>
+          </m.div>
 
-          <div className="seam" aria-hidden="true">
+          <m.div className="seam" aria-hidden="true" variants={introSurfacePartVariants} custom={2}>
             <span>改写</span>
-          </div>
+          </m.div>
 
-          <div className="output-pane" aria-live="polite">
+          <m.div className="output-pane" aria-live="polite" variants={introSurfacePartVariants} custom={1}>
             <div className="pane-heading">
               <div>
                 <span className="pane-index">乙</span>
@@ -380,18 +464,42 @@ export function RewriterWorkbench({
               </div>
             ) : (
               <div className={`results-grid count-${resultOrder.length}`}>
-                {resultOrder.map((id) => {
+                {resultOrder.map((id, index) => {
                   const output = outputs[id];
                   if (!output) return null;
+                  const copied = copiedId === id;
                   return (
-                    <article className={`result ${output.status}`} key={id}>
+                    <m.article
+                      className={`result ${output.status}`}
+                      key={id}
+                      data-state={output.status}
+                      initial={reduceMotion ? false : { opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        duration: reduceMotion ? 0.08 : MOTION_DURATION.base,
+                        delay: reduceMotion ? 0 : index * 0.05,
+                        ease: MOTION_EASE.enter,
+                      }}
+                    >
                       <header>
                         <div>
                           <span>{output.label}</span>
                           <small>{statusLabel(output.status)}</small>
                         </div>
                         <button type="button" onClick={() => void copyOutput(id)} disabled={!output.text}>
-                          复制
+                          <span className="copy-label">
+                            <AnimatePresence initial={false} mode="wait">
+                              <m.span
+                                key={copied ? "copied" : "copy"}
+                                initial={reduceMotion ? false : { opacity: 0, y: 2 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={reduceMotion ? undefined : { opacity: 0, y: -2 }}
+                                transition={{ duration: reduceMotion ? 0.08 : MOTION_DURATION.instant }}
+                              >
+                                {copied ? "已复制" : "复制"}
+                              </m.span>
+                            </AnimatePresence>
+                          </span>
                         </button>
                       </header>
                       {output.error ? <p className="result-error">{output.error}</p> : null}
@@ -399,32 +507,54 @@ export function RewriterWorkbench({
                         {output.text || (output.status === "streaming" ? "正在建立语言模型连接…" : "")}
                         {output.status === "streaming" ? <span className="cursor" aria-hidden="true" /> : null}
                       </div>
-                    </article>
+                    </m.article>
                   );
                 })}
               </div>
             )}
-          </div>
-        </section>
+          </m.div>
+        </m.section>
 
-        <footer className="action-bar">
+        <m.footer className="action-bar" variants={introActionVariants}>
           <div>
             <p className={error ? "form-message error" : "form-message"} role="status">
               {error || "快捷键：⌘ / Ctrl + Enter"}
             </p>
             <small>密钥仅随本次请求发送；服务端不会记录正文或密钥。</small>
           </div>
-          {isGenerating ? (
-            <button type="button" className="primary-action stop" onClick={stop}>
-              <span>{check.enabled && diceState === "rolling" ? "正在判定 · 点击停止" : "停止接收"}</span><b>■</b>
-            </button>
-          ) : (
-            <button type="button" className="primary-action" onClick={() => void generate()}>
-              <span>{check.enabled ? "投骰并开始侧写" : "开始侧写"}</span><b>↗</b>
-            </button>
-          )}
-        </footer>
+          <AnimatePresence initial={false} mode="popLayout">
+            {isGenerating ? (
+              <m.button
+                key="stop"
+                type="button"
+                className="primary-action stop generating"
+                onClick={stop}
+                initial={reduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                whileTap={{ y: 1, scale: 0.99 }}
+                transition={{ duration: reduceMotion ? 0.08 : MOTION_DURATION.fast }}
+              >
+                <span>{check.enabled && diceState === "rolling" ? "正在判定 · 点击停止" : "停止接收"}</span><b aria-hidden="true">■</b>
+              </m.button>
+            ) : (
+              <m.button
+                key="start"
+                type="button"
+                className="primary-action"
+                onClick={() => void generate()}
+                initial={reduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                whileTap={{ y: 1, scale: 0.99 }}
+                transition={{ duration: reduceMotion ? 0.08 : MOTION_DURATION.fast }}
+              >
+                <span>{check.enabled ? "投骰并开始侧写" : "开始侧写"}</span><b aria-hidden="true">↗</b>
+              </m.button>
+            )}
+          </AnimatePresence>
+        </m.footer>
       </section>
-    </main>
+    </PageIntro>
   );
 }

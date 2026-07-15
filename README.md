@@ -13,7 +13,9 @@
 - 本地确定性模拟服务，无需任何接口密钥即可开发和自动测试
 - Redis 限流；Redis 不可用时自动退回进程内限流
 - 自定义供应商 URL SSRF 基础防护
-- 响应式界面、键盘焦点、减少动效模式
+- 响应式界面、键盘焦点、完整减少动效模式
+- 统一的“档案 / 信号 / 压印”动效系统，不对流式 token 逐字播放动画
+- 原创 SVG favicon 与 180×180 Apple Touch Icon
 - Docker 多阶段构建和 Docker Compose 一键启动
 
 ## 本地开发
@@ -25,11 +27,15 @@ npm run dev
 
 打开 <http://localhost:3000>。默认选择“本地演示”，不需要配置接口。
 
-## 使用 Docker Compose 部署
+## Docker 部署（推荐）
+
+项目以 Docker 作为主要生产部署方式。镜像使用 `node:22-alpine` 多阶段构建与 Next.js standalone 输出；运行层不包含源码和完整 `node_modules`，以非 root 的 `nextjs` 用户启动，并内置 `/api/health` 健康检查。
+
+### Docker Compose
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose up --build -d
 ```
 
 服务：
@@ -38,11 +44,62 @@ docker compose up --build
 - 健康检查：<http://localhost:3000/api/health>
 - Redis：仅在 Compose 内部暴露
 
+如需更换宿主机端口，在 `.env` 中设置：
+
+```dotenv
+APP_PORT=8080
+```
+
+随后访问 <http://localhost:8080>。Compose 中的 Redis 只用于限流，关闭了持久化；容器重启会重置限流计数，不会存储正文或接口密钥。
+
+查看状态和日志：
+
+```bash
+docker compose ps
+docker compose logs -f app
+```
+
 停止服务：
 
 ```bash
 docker compose down
 ```
+
+更新部署：
+
+```bash
+git pull --ff-only
+docker compose build --pull
+docker compose up -d --remove-orphans
+```
+
+### 单容器运行
+
+不需要 Redis 时，可以直接运行镜像。限流会自动退回当前应用进程的内存实现：
+
+```bash
+docker build -t inland-echoes .
+docker run --rm -p 3000:3000 --name inland-echoes inland-echoes
+```
+
+需要外部 Redis 时增加 `-e REDIS_URL=redis://host:6379`。供应商密钥应通过运行时环境变量或部署平台的 Secret 功能注入，不要写入 Dockerfile、镜像或版本库。
+
+### 生产部署检查
+
+```bash
+curl --fail http://127.0.0.1:3000/api/health
+curl --fail http://127.0.0.1:3000/api/providers
+docker inspect --format '{{json .State.Health}}' inland-echoes
+```
+
+当前 Dockerfile 与 Compose 已在 Linux arm64 容器环境完成镜像构建、非 root 运行、健康检查、Redis 连接、主页、供应商接口、图标请求和 NDJSON 流式改写验证。基础镜像提供 amd64/arm64 变体，应在目标架构上构建；需要发布多架构镜像时可使用 Docker Buildx 分别构建并生成 manifest。
+
+公开部署时还应：
+
+- 在容器前配置 HTTPS 反向代理，并转发流式响应而不是缓冲整个响应。
+- 只暴露应用端口，不要把 Redis 端口发布到公网。
+- 配置供应商预算上限、日志轮转以及主机或平台级监控。
+- 保持 `ALLOW_LOCAL_PROVIDER=false`；只有可信私有网络需要访问本地 HTTP 模型接口时才启用。
 
 ## 模型供应商
 
@@ -93,6 +150,16 @@ npm run test:e2e
 
 ```bash
 npm run check
+```
+
+Docker 发布前额外运行：
+
+```bash
+docker compose config
+docker build -t inland-echoes:verify .
+APP_PORT=3311 docker compose -p inland-echoes-verify up --build -d
+docker compose -p inland-echoes-verify ps
+docker compose -p inland-echoes-verify down --remove-orphans
 ```
 
 ### SiliconFlow 模型性价比测试

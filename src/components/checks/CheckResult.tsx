@@ -1,11 +1,16 @@
+"use client";
+
+import { m, useReducedMotion } from "motion/react";
 import {
   CHECK_OUTCOME_LABELS,
   getCheckSkill,
   getDifficultyLabel,
   type CheckResult as CheckResultValue,
 } from "@/lib/checks-shared";
+import { MOTION_DURATION, MOTION_EASE } from "@/lib/motion";
 
 export function CheckResult({ result }: { result: CheckResultValue }) {
+  const reduceMotion = useReducedMotion();
   const isCritical = result.outcome === "critical_failure" || result.outcome === "critical_success";
   const isSuccess = result.outcome === "success" || result.outcome === "critical_success";
   const detail = result.outcome === "critical_failure"
@@ -15,11 +20,19 @@ export function CheckResult({ result }: { result: CheckResultValue }) {
       : `与难度相差 ${Math.abs(result.margin)} 点。`;
 
   return (
-    <section
+    <m.section
       className={`check-result ${isSuccess ? "success" : "failure"} ${isCritical ? "critical" : ""}`}
       aria-live="polite"
       aria-atomic="true"
       data-testid="check-result"
+      data-state="resolved"
+      data-outcome={result.outcome}
+      initial={reduceMotion ? false : { opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{
+        duration: reduceMotion ? 0.08 : MOTION_DURATION.base,
+        ease: MOTION_EASE.enter,
+      }}
     >
       <div className="check-result-heading">
         <span>{getCheckSkill(result.skill).label} · 等级 {result.skillLevel}</span>
@@ -30,6 +43,6 @@ export function CheckResult({ result }: { result: CheckResultValue }) {
         <span>难度 {getDifficultyLabel(result.difficulty)} · {result.difficulty}</span>
       </p>
       <p className="check-explanation">{detail}</p>
-    </section>
+    </m.section>
   );
 }
