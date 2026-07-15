@@ -35,6 +35,13 @@ const builtinProviders = {
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
     apiKey: process.env.QWEN_API_KEY || "",
   },
+  siliconflow: {
+    id: "siliconflow",
+    label: "SiliconFlow",
+    model: process.env.SILICONFLOW_MODEL || "deepseek-ai/DeepSeek-V4-Flash",
+    baseUrl: process.env.SILICONFLOW_BASE_URL || "https://api.siliconflow.cn/v1",
+    apiKey: process.env.SILICONFLOW_API_KEY || "",
+  },
   openai: {
     id: "openai",
     label: "OpenAI",
@@ -69,6 +76,14 @@ export function getPublicProviderCatalog(): PublicProvider[] {
       configured: Boolean(builtinProviders.qwen.apiKey),
       builtin: true,
       note: "阿里云百炼，适合大陆部署",
+    },
+    {
+      id: "siliconflow",
+      label: "SiliconFlow",
+      model: builtinProviders.siliconflow.model,
+      configured: Boolean(builtinProviders.siliconflow.apiKey),
+      builtin: true,
+      note: "实测推荐：低成本多模型聚合接口",
     },
     {
       id: "openai",

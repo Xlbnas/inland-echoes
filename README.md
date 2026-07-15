@@ -52,6 +52,7 @@ docker compose down
 | --- | --- | --- | --- |
 | DeepSeek | `DEEPSEEK_API_KEY` | `DEEPSEEK_BASE_URL` | `deepseek-chat` |
 | 通义千问 | `QWEN_API_KEY` | `QWEN_BASE_URL` | `qwen-plus` |
+| SiliconFlow | `SILICONFLOW_API_KEY` | `SILICONFLOW_BASE_URL` | `deepseek-ai/DeepSeek-V4-Flash` |
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_BASE_URL` | `gpt-5.6-luna` |
 
 自定义供应商必须提供 HTTPS 地址。可信私有部署如需连接本机 Ollama 等 HTTP 端点，可设置 `ALLOW_LOCAL_PROVIDER=true`；不要在公开服务中启用。
@@ -93,6 +94,27 @@ npm run test:e2e
 ```bash
 npm run check
 ```
+
+### SiliconFlow 模型性价比基准
+
+基准工具使用两组固定中文改写样本，以相同参数并发测试多个候选模型，再由独立模型按事实保真、风格完成度、原创性、可读性和指令遵循进行盲评。报告只保存模型输出、延迟、token 用量和估算费用，不记录请求头或 API Key。
+
+```bash
+npm run benchmark:siliconflow:dry
+npm run benchmark:siliconflow
+```
+
+密钥从已被 Git 忽略的 `.env.local` 读取，报告生成在同样被忽略的 `benchmark-results/`。价格快照来自 SiliconFlow 官方价格页，运行前应确认平台实时价格是否变化。
+
+2026-07-15 使用两组中文改写样本、生产用“生成后校验 + 必要时压缩”策略的结果：
+
+| 模型 | 盲评质量 | 严格成功率 | 平均延迟 | 100 次估算费用 |
+| --- | ---: | ---: | ---: | ---: |
+| DeepSeek-V4-Flash | 7.4 / 10 | 2 / 2 | 13.98 s | ¥0.0338 |
+| Qwen3.5-35B-A3B | 6.4 / 10 | 2 / 2 | 5.48 s | ¥0.0510 |
+| Qwen3.6-35B-A3B | 6.9 / 10 | 2 / 2 | 4.91 s | ¥0.2494 |
+
+因此默认使用 `deepseek-ai/DeepSeek-V4-Flash`：质量最高且估算费用最低；Qwen3.5 可作为更快的低价备选。DeepSeek-V3.2 文风优秀，但延迟和费用更高，且短文本长度遵循不稳定。样本量较小，生产决策前应加入真实业务文本复测。
 
 ## 隐私与部署提示
 

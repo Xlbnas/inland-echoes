@@ -11,6 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "benchmark:siliconflow": "node --use-env-proxy --env-file-if-exists=.env.local scripts/benchmark-siliconflow.mjs",
+    "benchmark:siliconflow:dry": "node --use-env-proxy --env-file-if-exists=.env.local scripts/benchmark-siliconflow.mjs --dry-run",
     "check": "npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
