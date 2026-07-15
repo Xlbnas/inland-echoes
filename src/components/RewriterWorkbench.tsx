@@ -246,7 +246,7 @@ export function RewriterWorkbench({
   return (
     <main className="shell">
       <aside className="channel-rail" aria-label="意识频道状态">
-        <div className="rail-mark" aria-hidden="true">IE</div>
+        <div className="rail-mark" aria-hidden="true">极乐</div>
         <div className="rail-line" aria-hidden="true" />
         <ol>
           {CHANNELS.map((channel, index) => (
@@ -262,8 +262,8 @@ export function RewriterWorkbench({
       <section className="workspace">
         <header className="masthead">
           <div>
-            <p className="eyebrow">文本侧写台 / CASEWORK 01</p>
-            <h1>内陆回声</h1>
+            <p className="eyebrow">极乐迪斯科文本侧写台 / 案卷 01</p>
+            <h1>极乐迪斯科｜内陆回声</h1>
           </div>
           <div className="masthead-note">
             <span className="live-dot" />
@@ -344,7 +344,7 @@ export function RewriterWorkbench({
               <input id="custom-label" value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="例如 Moonshot" />
             </div>
             <div>
-              <label htmlFor="custom-url">OpenAI 兼容 Base URL</label>
+              <label htmlFor="custom-url">OpenAI 兼容接口地址</label>
               <input id="custom-url" value={customBaseUrl} onChange={(event) => setCustomBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" />
             </div>
             <div>
@@ -352,7 +352,7 @@ export function RewriterWorkbench({
               <input id="custom-model" value={customModel} onChange={(event) => setCustomModel(event.target.value)} placeholder="model-name" />
             </div>
             <div>
-              <label htmlFor="custom-key">临时 API Key</label>
+              <label htmlFor="custom-key">临时接口密钥</label>
               <input id="custom-key" type="password" value={customApiKey} onChange={(event) => setCustomApiKey(event.target.value)} placeholder="仅保存在当前页面内存" autoComplete="off" />
             </div>
             <button type="button" className="add-provider" onClick={addCustomProvider}>接入线路</button>
@@ -384,7 +384,7 @@ export function RewriterWorkbench({
           <div className="input-pane">
             <div className="pane-heading">
               <div>
-                <span className="pane-index">A</span>
+                <span className="pane-index">甲</span>
                 <h2>现场口供</h2>
               </div>
               <span className={text.length > 900 ? "character-count warning" : "character-count"}>
@@ -415,13 +415,13 @@ export function RewriterWorkbench({
           </div>
 
           <div className="seam" aria-hidden="true">
-            <span>REWRITE</span>
+            <span>改写</span>
           </div>
 
           <div className="output-pane" aria-live="polite">
             <div className="pane-heading">
               <div>
-                <span className="pane-index">B</span>
+                <span className="pane-index">乙</span>
                 <h2>侧写记录</h2>
               </div>
               <span className={isGenerating ? "signal active" : "signal"}>

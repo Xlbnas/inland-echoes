@@ -1,16 +1,16 @@
-# 内陆回声
+# 极乐迪斯科｜内陆回声
 
-一个面向中文文本的原创心理黑色叙事改写工作台。支持 DeepSeek、通义千问、OpenAI，以及任意 OpenAI Chat Completions 兼容接口；最多可以同时选择三个模型并列比较流式输出。
+一个非官方、完全开源的《极乐迪斯科》相关中文文本改写工作台。支持 DeepSeek、通义千问、OpenAI、SiliconFlow，以及任意 OpenAI Chat Completions 兼容接口；最多可以同时选择三个模型并列比较流式输出。
 
-> 项目只提取“心理黑色侦探、意识流、黑色幽默”等一般写作维度，不复制或检索任何现有游戏文本。
+> 本项目为非官方开源项目，不内置或检索游戏原文。
 
 ## 功能
 
 - 四种改写预设：心理黑色侦探、黑色幽默、多声部内心独白、抒情意识流
 - 多供应商并行流式输出（NDJSON）
-- DeepSeek、Qwen、OpenAI 内置配置
-- 自定义 OpenAI 兼容 Base URL、模型和临时 API Key
-- 本地确定性 Mock，无需任何 API Key 即可开发和自动测试
+- DeepSeek、通义千问、OpenAI、SiliconFlow 内置配置
+- 自定义 OpenAI 兼容接口地址、模型和临时接口密钥
+- 本地确定性模拟服务，无需任何接口密钥即可开发和自动测试
 - Redis 限流；Redis 不可用时自动退回进程内限流
 - 自定义供应商 URL SSRF 基础防护
 - 响应式界面、键盘焦点、减少动效模式
@@ -23,9 +23,9 @@ npm install
 npm run dev
 ```
 
-打开 <http://localhost:3000>。默认选择“本地演示”，不需要配置 API。
+打开 <http://localhost:3000>。默认选择“本地演示”，不需要配置接口。
 
-## Docker Compose
+## 使用 Docker Compose 部署
 
 ```bash
 cp .env.example .env
@@ -48,7 +48,7 @@ docker compose down
 
 所有内置供应商都可以通过 `.env` 配置。也可以在页面中输入临时密钥；临时密钥只保存在页面内存，并随单次请求发送，不会进入 localStorage、数据库或日志。
 
-| 供应商 | Key | Base URL | 默认模型 |
+| 供应商 | 密钥变量 | 接口地址变量 | 默认模型 |
 | --- | --- | --- | --- |
 | DeepSeek | `DEEPSEEK_API_KEY` | `DEEPSEEK_BASE_URL` | `deepseek-chat` |
 | 通义千问 | `QWEN_API_KEY` | `QWEN_BASE_URL` | `qwen-plus` |
@@ -57,7 +57,7 @@ docker compose down
 
 自定义供应商必须提供 HTTPS 地址。可信私有部署如需连接本机 Ollama 等 HTTP 端点，可设置 `ALLOW_LOCAL_PROVIDER=true`；不要在公开服务中启用。
 
-## API
+## 接口说明
 
 `POST /api/rewrite`
 
@@ -67,7 +67,7 @@ docker compose down
   "style": "inner_monologue",
   "providers": [
     { "id": "mock", "label": "本地演示" },
-    { "id": "qwen", "label": "通义千问", "apiKey": "optional-temporary-key" }
+    { "id": "qwen", "label": "通义千问", "apiKey": "临时密钥" }
   ]
 }
 ```
@@ -95,9 +95,9 @@ npm run test:e2e
 npm run check
 ```
 
-### SiliconFlow 模型性价比基准
+### SiliconFlow 模型性价比测试
 
-基准工具使用两组固定中文改写样本，以相同参数并发测试多个候选模型，再由独立模型按事实保真、风格完成度、原创性、可读性和指令遵循进行盲评。报告只保存模型输出、延迟、token 用量和估算费用，不记录请求头或 API Key。
+测试工具使用两组固定中文改写样本，以相同参数并发测试多个候选模型，再由独立模型按事实保真、风格完成度、原创性、可读性和指令遵循进行盲评。报告只保存模型输出、延迟、令牌用量和估算费用，不记录请求头或接口密钥。
 
 ```bash
 npm run benchmark:siliconflow:dry
@@ -118,7 +118,11 @@ npm run benchmark:siliconflow
 
 ## 隐私与部署提示
 
-- 不要把生产 API Key 写进浏览器代码或提交到 Git。
-- 服务不会主动记录输入文本和 API Key；云平台的代理日志策略仍需单独核对。
+- 不要把生产接口密钥写进浏览器代码或提交到 Git。
+- 服务不会主动记录输入文本和接口密钥；云平台的代理日志策略仍需单独核对。
 - 对外开放前建议配置 HTTPS、WAF/验证码，以及供应商侧预算上限。
 - 中国大陆公开网站部署还需按实际主体和云厂商要求处理备案与合规配置。
+
+## 开源许可证
+
+本项目采用 [MIT 许可证](./LICENSE) 完全开源。你可以自由使用、复制、修改、合并、发布、分发、再许可或销售本项目副本，但需保留原始版权与许可声明。
