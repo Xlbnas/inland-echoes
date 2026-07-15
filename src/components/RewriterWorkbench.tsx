@@ -31,6 +31,7 @@ import {
 import { STYLE_PRESETS } from "@/lib/styles";
 import type {
   ProviderRequest,
+  ProviderCapabilities,
   PublicProvider,
   StyleId,
 } from "@/lib/types";
@@ -48,8 +49,10 @@ const SAMPLES = [
 
 export function RewriterWorkbench({
   initialProviders,
+  capabilities,
 }: {
   initialProviders: PublicProvider[];
+  capabilities: ProviderCapabilities;
 }) {
   const reduceMotion = useReducedMotion();
   const [text, setText] = useState("");
@@ -115,6 +118,11 @@ export function RewriterWorkbench({
 
   function addCustomProvider() {
     setError("");
+    if (!capabilities.customProvidersEnabled) {
+      setError("当前部署未启用自定义模型线路");
+      setShowCustom(false);
+      return;
+    }
     if (!customLabel.trim() || !customBaseUrl.trim() || !customModel.trim() || !customApiKey.trim()) {
       setError("请完整填写自定义供应商信息");
       return;
@@ -163,13 +171,15 @@ export function RewriterWorkbench({
       return;
     }
 
-    const requests: ProviderRequest[] = selectedProviders.map((provider) => ({
-      id: provider.id,
-      label: provider.label,
-      apiKey: provider.apiKey || apiKeys[provider.id] || undefined,
-      baseUrl: provider.baseUrl,
-      model: provider.model,
-    }));
+    const requests: ProviderRequest[] = selectedProviders
+      .filter((provider) => provider.builtin || capabilities.customProvidersEnabled)
+      .map((provider) => ({
+        id: provider.id,
+        label: provider.label,
+        apiKey: provider.apiKey || apiKeys[provider.id] || undefined,
+        baseUrl: provider.baseUrl,
+        model: provider.model,
+      }));
 
     await generateStream({ text: source, style, providers: requests, check });
   }
@@ -266,18 +276,20 @@ export function RewriterWorkbench({
           <m.div className="control-group provider-control" variants={introControlItemVariants}>
             <div className="provider-heading">
               <span className="control-label">模型线路 · {selectedIds.length}/3</span>
-              <button
-                ref={customToggleRef}
-                type="button"
-                className="text-button custom-toggle"
-                onClick={() => setShowCustom((value) => !value)}
-                disabled={isGenerating}
-                aria-expanded={showCustom}
-                aria-controls="custom-provider-fields"
-              >
-                <span className="custom-symbol" aria-hidden="true">{showCustom ? "−" : "+"}</span>
-                {showCustom ? "收起自定义" : "自定义线路"}
-              </button>
+              {capabilities.customProvidersEnabled ? (
+                <button
+                  ref={customToggleRef}
+                  type="button"
+                  className="text-button custom-toggle"
+                  onClick={() => setShowCustom((value) => !value)}
+                  disabled={isGenerating}
+                  aria-expanded={showCustom}
+                  aria-controls="custom-provider-fields"
+                >
+                  <span className="custom-symbol" aria-hidden="true">{showCustom ? "−" : "+"}</span>
+                  {showCustom ? "收起自定义" : "自定义线路"}
+                </button>
+              ) : null}
             </div>
             <div className="provider-list">
               {providers.map((provider) => {
@@ -325,7 +337,7 @@ export function RewriterWorkbench({
         </m.section>
 
         <AnimatePresence initial={false}>
-          {showCustom ? (
+          {capabilities.customProvidersEnabled && showCustom ? (
             <m.section
               id="custom-provider-fields"
               className="custom-provider"
@@ -336,6 +348,9 @@ export function RewriterWorkbench({
               variants={disclosureVariants}
               data-state="open"
             >
+              <p className="provider-security-note">
+                自定义线路会将本次正文和临时密钥发送到你填写的服务地址。
+              </p>
               <div>
                 <label htmlFor="custom-label">显示名称</label>
                 <input id="custom-label" name="custom-label" value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="例如 Moonshot…" autoComplete="off" disabled={isGenerating} />

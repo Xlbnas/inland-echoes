@@ -1,6 +1,16 @@
 import { RewriterWorkbench } from "@/components/RewriterWorkbench";
-import { getPublicProviderCatalog } from "@/lib/provider-config";
+import {
+  getProviderCapabilities,
+  getPublicProviderCatalog,
+} from "@/lib/provider-config";
+
+export const dynamic = "force-dynamic";
 
 export default function Home() {
-  return <RewriterWorkbench initialProviders={getPublicProviderCatalog()} />;
+  return (
+    <RewriterWorkbench
+      initialProviders={getPublicProviderCatalog()}
+      capabilities={getProviderCapabilities()}
+    />
+  );
 }

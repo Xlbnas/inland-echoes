@@ -1,32 +1,38 @@
-import { rateLimit } from "@/lib/rate-limit";
+import {
+  calculateRateLimitCost,
+  consumeRateLimit,
+  getClientIdentifier,
+} from "@/lib/rate-limit";
 import { rollCheck } from "@/lib/checks";
+import {
+  ProviderConfigurationError,
+  validateProviderRequests,
+} from "@/lib/provider-config";
 import { publicProviderError, streamProviderRewrite } from "@/lib/provider-stream";
 import type { RewriteEvent } from "@/lib/types";
 import { rewriteRequestSchema } from "@/lib/validation";
+import { UnsafeProviderTargetError } from "@/lib/safe-provider-url";
 import { ZodError } from "zod";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function clientIp(request: Request) {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
-
 export async function POST(request: Request) {
-  const limit = await rateLimit(clientIp(request));
-  if (!limit.allowed) {
-    return Response.json(
-      { error: "请求过于频繁，请稍后再试" },
-      { status: 429, headers: { "Retry-After": "60" } },
-    );
-  }
-
   try {
     const payload = rewriteRequestSchema.parse(await request.json());
+    validateProviderRequests(payload.providers);
+    const cost = calculateRateLimitCost(
+      payload.providers.length,
+      Array.from(payload.text).length,
+      payload.check.enabled,
+    );
+    const limit = await consumeRateLimit(getClientIdentifier(request.headers), cost);
+    if (!limit.allowed) {
+      return Response.json(
+        { error: "请求过于频繁，请稍后再试" },
+        { status: 429, headers: { "Retry-After": String(limit.retryAfter) } },
+      );
+    }
     const checkResult = payload.check.enabled ? rollCheck(payload.check) : undefined;
     const encoder = new TextEncoder();
     const abortController = new AbortController();
@@ -98,6 +104,15 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    if (error instanceof ProviderConfigurationError) {
+      return Response.json({ error: error.message }, { status: 400 });
+    }
+    if (error instanceof UnsafeProviderTargetError) {
+      return Response.json(
+        { error: error.message, code: "unsafe_provider_target" },
+        { status: 400 },
+      );
+    }
     if (error instanceof ZodError) {
       return Response.json(
         { error: error.issues[0]?.message || "请求参数无效" },

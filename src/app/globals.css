@@ -541,6 +541,13 @@ button:disabled {
   gap: 0.35rem;
 }
 
+.provider-security-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--quiet);
+  font: 0.62rem/1.45 var(--mono);
+}
+
 .custom-provider label,
 .credential-row span {
   color: var(--quiet);

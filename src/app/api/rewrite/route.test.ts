@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { getCheckSkill, type CheckResult } from "@/lib/checks-shared";
+import { resetRateLimitForTests } from "@/lib/rate-limit";
 import type { RewriteEvent } from "@/lib/types";
 import { POST } from "./route";
 
@@ -28,6 +29,14 @@ const baseRequest = {
   providers: [{ id: "mock", label: "本地演示" }],
 };
 
+afterEach(() => {
+  delete process.env.CUSTOM_PROVIDERS_ENABLED;
+  delete process.env.ALLOW_LOCAL_PROVIDER;
+  delete process.env.TRUST_PROXY;
+  delete process.env.RATE_LIMIT_UNITS_PER_MINUTE;
+  resetRateLimitForTests();
+});
+
 describe("POST /api/rewrite", () => {
   it("兼容不含 check 的旧请求且不发送判定事件", async () => {
     const response = await POST(makeRequest(baseRequest));
@@ -36,6 +45,11 @@ describe("POST /api/rewrite", () => {
     expect(events.some((event) => event.type === "check_resolved")).toBe(false);
     expect(events[0]?.type).toBe("provider_start");
     expect(events.at(-1)?.type).toBe("provider_done");
+    const output = events
+      .filter((event): event is Extract<RewriteEvent, { type: "provider_delta" }> => event.type === "provider_delta")
+      .map((event) => event.delta)
+      .join("");
+    expect(output).not.toMatch(/逻辑：通过|未通过|灾难性误判|极佳通过/u);
   });
 
   it.each([
@@ -97,5 +111,77 @@ describe("POST /api/rewrite", () => {
     const events = await readEvents(response);
     expect(events.filter((event) => event.type === "check_resolved")).toHaveLength(1);
     expect(events.filter((event) => event.type === "provider_start")).toHaveLength(2);
+  });
+
+  it("关闭判定不改变多供应商开始与完成顺序", async () => {
+    const response = await POST(makeRequest({
+      ...baseRequest,
+      providers: [
+        { id: "mock", label: "本地演示甲" },
+        { id: "mock", label: "本地演示乙" },
+      ],
+    }));
+    const events = await readEvents(response);
+    expect(events.filter((event) => event.type === "check_resolved")).toHaveLength(0);
+    expect(events
+      .filter((event): event is Extract<RewriteEvent, { type: "provider_start" }> => event.type === "provider_start")
+      .map((event) => event.label))
+      .toEqual(["本地演示甲", "本地演示乙"]);
+    expect(events.filter((event) => event.type === "provider_done")).toHaveLength(2);
+  });
+
+  it("默认拒绝未知自定义供应商且 ALLOW_LOCAL_PROVIDER 不能绕过", async () => {
+    const customRequest = {
+      ...baseRequest,
+      providers: [{
+        id: "custom-test",
+        label: "测试线路",
+        baseUrl: "https://api.example.com/v1",
+        model: "test-model",
+        apiKey: "test-key",
+      }],
+    };
+    const disabled = await POST(makeRequest(customRequest));
+    expect(disabled.status).toBe(400);
+    await expect(disabled.json()).resolves.toEqual({ error: "当前部署未启用自定义模型线路" });
+
+    process.env.ALLOW_LOCAL_PROVIDER = "true";
+    const stillDisabled = await POST(makeRequest({
+      ...customRequest,
+      providers: [{
+        ...customRequest.providers[0],
+        baseUrl: "http://localhost:11434/v1",
+      }],
+    }));
+    expect(stillDisabled.status).toBe(400);
+  });
+
+  it("SSRF 字面目标在流开始前被拒绝", async () => {
+    process.env.CUSTOM_PROVIDERS_ENABLED = "true";
+    const response = await POST(makeRequest({
+      ...baseRequest,
+      providers: [{
+        id: "custom-test",
+        label: "测试线路",
+        baseUrl: "https://169.254.169.254/v1",
+        model: "test-model",
+        apiKey: "test-key",
+      }],
+    }));
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error).toBe("该自定义线路地址不符合安全要求");
+    expect(payload.code).toBe("unsafe_provider_target");
+  });
+
+  it("不信任代理时伪造不同 XFF 仍共享同一加权限流桶", async () => {
+    process.env.RATE_LIMIT_UNITS_PER_MINUTE = "3";
+    resetRateLimitForTests();
+    const first = await POST(makeRequest(baseRequest));
+    const second = await POST(makeRequest(baseRequest));
+    expect(first.status).toBe(200);
+    expect(first.headers.get("X-RateLimit-Remaining")).toBe("0");
+    expect(second.status).toBe(429);
+    expect(Number(second.headers.get("Retry-After"))).toBeGreaterThan(0);
   });
 });

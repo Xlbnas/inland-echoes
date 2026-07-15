@@ -1,9 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { rewriteRequestSchema, validateCustomBaseUrl } from "./validation";
-
-afterEach(() => {
-  delete process.env.ALLOW_LOCAL_PROVIDER;
-});
+import { describe, expect, it } from "vitest";
+import { rewriteRequestSchema } from "./validation";
 
 describe("rewriteRequestSchema", () => {
   it("accepts a valid multi-provider request", () => {
@@ -73,24 +69,5 @@ describe("rewriteRequestSchema", () => {
         providers: [{ id: "mock", label: "本地演示" }],
       }).success,
     ).toBe(false);
-  });
-});
-
-describe("validateCustomBaseUrl", () => {
-  it("accepts public https URLs", () => {
-    expect(validateCustomBaseUrl("https://api.example.com/v1/"))
-      .toBe("https://api.example.com/v1");
-  });
-
-  it("blocks private and insecure endpoints by default", () => {
-    expect(() => validateCustomBaseUrl("http://api.example.com/v1")).toThrow("HTTPS");
-    expect(() => validateCustomBaseUrl("https://127.0.0.1:9000/v1")).toThrow("私有网络");
-    expect(() => validateCustomBaseUrl("https://192.168.1.2/v1")).toThrow("私有网络");
-  });
-
-  it("allows local development only when explicitly enabled", () => {
-    process.env.ALLOW_LOCAL_PROVIDER = "true";
-    expect(validateCustomBaseUrl("http://localhost:11434/v1"))
-      .toBe("http://localhost:11434/v1");
   });
 });

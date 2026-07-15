@@ -75,7 +75,12 @@ async function main() {
     const started = performance.now();
     try {
       const generated = await generateValidatedRewrite({ id: "siliconflow", label: "SiliconFlow", model: MODEL, baseUrl: BASE_URL, apiKey }, testCase.source, testCase.style, new AbortController().signal, testCase.check);
-      const quality = validateRewriteQuality(testCase.source, generated.content, testCase.check);
+      const quality = validateRewriteQuality(
+        testCase.source,
+        generated.content,
+        testCase.style,
+        testCase.check,
+      );
       const judged = await judge(apiKey, testCase, generated.content);
       const row = { caseId: testCase.id, run, style: testCase.style, skill: testCase.skill, outcome: testCase.outcome, sourceLength: rewriteLengthRange(testCase.source).sourceLength, outputLength: quality.outputLength, attempts: generated.attempts, repaired: generated.repaired, repairViolations: generated.violations, latencyMs: Math.round(performance.now() - started), localValid: quality.valid, violations: quality.violations, scores: judged.scores, usage: judged.usage, output: generated.content };
       console.log(`[ok] ${testCase.id} #${run} ${row.latencyMs}ms repaired=${row.repaired}`); return row;

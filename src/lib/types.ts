@@ -18,6 +18,10 @@ export type PublicProvider = {
   note: string;
 };
 
+export type ProviderCapabilities = {
+  customProvidersEnabled: boolean;
+};
+
 export type ProviderRequest = {
   id: string;
   label: string;

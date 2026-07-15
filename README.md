@@ -1,6 +1,6 @@
 # 极乐迪斯科｜内陆回声
 
-一个非官方、完全开源的《极乐迪斯科》相关中文文本改写工作台。支持 DeepSeek、通义千问、OpenAI、SiliconFlow，以及任意 OpenAI Chat Completions 兼容接口；最多可以同时选择三个模型并列比较流式输出。
+一个非官方、完全开源的《极乐迪斯科》相关中文文本改写工作台。支持 DeepSeek、通义千问、OpenAI、SiliconFlow，以及显式启用后的 OpenAI Chat Completions 兼容接口；最多可以同时选择三个模型并列比较流式输出。
 
 > 本项目为非官方开源项目，不内置或检索游戏原文。
 
@@ -9,10 +9,10 @@
 - 四种改写预设：心理黑色侦探、黑色幽默、多声部内心独白、抒情意识流
 - 多供应商并行流式输出（NDJSON）
 - DeepSeek、通义千问、OpenAI、SiliconFlow 内置配置
-- 自定义 OpenAI 兼容接口地址、模型和临时接口密钥
+- 默认关闭的自定义 OpenAI 兼容接口地址、模型和临时接口密钥
 - 本地确定性模拟服务，无需任何接口密钥即可开发和自动测试
-- Redis 限流；Redis 不可用时自动退回进程内限流
-- 自定义供应商 URL SSRF 基础防护
+- 按供应商数量、文本长度和判定成本加权的 Redis 限流；Redis 不可用时自动退回有界进程内限流
+- 自定义供应商 URL 的 DNS 校验、连接地址绑定、重定向拒绝和响应体限制
 - 响应式界面、键盘焦点、完整减少动效模式
 - 统一的“档案 / 信号 / 压印”动效系统；远端增量进入独立 Unicode 打字队列，不为每个字符创建 DOM 节点
 - 结构化 system/user 提示词、分长度合同、认知频道/判定结果质量校验与一次定向修复
@@ -101,7 +101,8 @@ docker inspect --format '{{json .State.Health}}' inland-echoes
 - 在容器前配置 HTTPS 反向代理，并转发流式响应而不是缓冲整个响应。
 - 只暴露应用端口，不要把 Redis 端口发布到公网。
 - 配置供应商预算上限、日志轮转以及主机或平台级监控。
-- 保持 `ALLOW_LOCAL_PROVIDER=false`；只有可信私有网络需要访问本地 HTTP 模型接口时才启用。
+- 保持 `CUSTOM_PROVIDERS_ENABLED=false`；公开部署不建议开放用户自定义模型地址。
+- 保持 `ALLOW_LOCAL_PROVIDER=false`；只有已开启自定义线路且可信私有网络需要访问本地 HTTP 模型接口时才启用。
 
 ## 模型供应商
 
@@ -114,7 +115,34 @@ docker inspect --format '{{json .State.Health}}' inland-echoes
 | SiliconFlow | `SILICONFLOW_API_KEY` | `SILICONFLOW_BASE_URL` | `deepseek-ai/DeepSeek-V4-Flash` |
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_BASE_URL` | `gpt-5.6-luna` |
 
-自定义供应商必须提供 HTTPS 地址。可信私有部署如需连接本机 Ollama 等 HTTP 端点，可设置 `ALLOW_LOCAL_PROVIDER=true`；不要在公开服务中启用。
+### 自定义线路安全
+
+自定义线路默认关闭。只有明确设置以下变量时，页面才显示自定义线路入口，服务端才接受未知供应商 ID：
+
+```dotenv
+CUSTOM_PROVIDERS_ENABLED=true
+```
+
+自定义线路会把本次正文和页面内填写的临时密钥发送到用户提供的服务地址。公网部署不建议开启。服务端会在请求前解析全部 A/AAAA 地址，拒绝私网、环回、链路本地、保留地址、云环境 metadata 目标和公私混合解析，并把实际连接固定到已验证地址；TLS 仍使用原 hostname 完成 SNI 与证书校验。所有 3xx 重定向都会被拒绝，同时限制响应头等待时间、总请求时间、响应体、单个 SSE frame 和累计输出大小。
+
+`ALLOW_LOCAL_PROVIDER` 与自定义线路开关职责不同：前者不会启用自定义线路，只在 `CUSTOM_PROVIDERS_ENABLED=true` 后允许可信私有部署访问本地 HTTP 服务。它不适合公网部署，metadata 目标仍会被拒绝。
+
+### 可信代理与限流
+
+默认 `TRUST_PROXY=false`，应用完全忽略 `X-Forwarded-For` 和 `X-Real-IP`，所有直连访客使用一个共享安全限流桶。这会降低直连模式的并发额度，但用户无法通过伪造请求头生成无限限流 key。
+
+只有应用确实位于可信反向代理后方时才设置：
+
+```dotenv
+TRUST_PROXY=true
+RATE_LIMIT_UNITS_PER_MINUTE=60
+```
+
+反向代理必须覆盖客户端传入的 `X-Forwarded-For` 和 `X-Real-IP`，不能在未经清理的用户头后简单追加。应用会严格解析代理头并把规范化地址哈希为固定长度标识。每次请求按供应商数量、文本长度和是否启用判定消耗单位，多供应商和长文本消耗更高；Redis 与内存回退使用相同语义。
+
+### 判定关闭语义
+
+关闭 2D6 判定后不会生成成功、失败、极佳通过或灾难性误判标签，也不会伪造骰点。多声部内心独白仍使用 2–4 个不带结果的原创认知频道；心理黑色侦探、黑色幽默和抒情意识流以自然叙事为主，频道标签可完全省略。
 
 ## 接口说明
 

@@ -39,16 +39,21 @@ test("rewrites text with the local demo provider", async ({ page }) => {
   await expect(page.locator(".result-text")).toContainText(
     "凌晨三点，我在厨房里找到最后一杯冷咖啡。",
   );
+  await expect(page.locator(".result-text")).toContainText("【逻辑】");
+  await expect(page.locator(".result-text")).toContainText("【直觉】");
+  await expect(page.locator(".result-text")).not.toContainText(/通过|未通过|灾难性误判|极佳通过/u);
   await expect(page.getByTestId("check-result")).toHaveCount(0);
 });
 
 test("switches styles and provider selections without layout replacement", async ({ page }) => {
   await page.goto("/");
 
-  const lyrical = page.getByRole("radio", { name: "抒情" });
-  await lyrical.click();
-  await expect(lyrical).toBeChecked();
-  await expect(page.locator(".style-indicator")).toHaveCount(1);
+  for (const name of ["侦探", "幽默", "内心", "抒情"]) {
+    const option = page.getByRole("radio", { name });
+    await option.click();
+    await expect(option).toBeChecked();
+    await expect(page.locator(".style-indicator")).toHaveCount(1);
+  }
 
   const deepSeek = page.getByRole("checkbox", { name: /^DeepSeek / });
   await deepSeek.check();
@@ -56,25 +61,21 @@ test("switches styles and provider selections without layout replacement", async
   await expect(page.getByText("模型线路 · 2/3")).toBeVisible();
 });
 
-test("opens, closes, and rapidly reopens the custom provider UI without stale nodes", async ({ page }) => {
+test("默认不显示自定义线路入口和表单", async ({ page }) => {
   await page.goto("/");
   const toggle = page.locator('button[aria-controls="custom-provider-fields"]');
   const form = page.getByLabel("添加自定义供应商");
-
-  await toggle.click();
-  await expect(form).toBeVisible();
-  await expect(form).toHaveAttribute("data-state", "open");
-  await expect(page.getByLabel("OpenAI 兼容接口地址")).toHaveAttribute(
-    "placeholder",
-    "https://api.example.com/v1…",
-  );
-
-  await toggle.click();
+  await expect(toggle).toHaveCount(0);
   await expect(form).toHaveCount(0);
-  await toggle.click();
-  await expect(form).toBeVisible();
-  await toggle.click();
-  await expect(form).toHaveCount(0);
+});
+
+test("关闭判定的侦探风格不生成逻辑通过", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("radio", { name: "侦探" }).click();
+  await page.getByLabel("需要改写的原文").fill("会议结束了，但没有人真正得到答案。");
+  await page.getByRole("button", { name: "开始侧写" }).click();
+  await expect(page.locator('.result[data-state="done"]')).toBeVisible();
+  await expect(page.locator(".result-text")).not.toContainText(/逻辑：通过|未通过|灾难性误判|极佳通过/u);
 });
 
 test("expands and collapses the cognitive check panel", async ({ page }) => {
