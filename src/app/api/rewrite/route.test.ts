@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getCheckSkill, type CheckResult } from "@/lib/checks-shared";
 import { resetRateLimitForTests } from "@/lib/rate-limit";
 import type { RewriteEvent } from "@/lib/types";
@@ -34,6 +34,10 @@ afterEach(() => {
   delete process.env.ALLOW_LOCAL_PROVIDER;
   delete process.env.TRUST_PROXY;
   delete process.env.RATE_LIMIT_UNITS_PER_MINUTE;
+  delete process.env.SILICONFLOW_API_KEY;
+  delete process.env.SILICONFLOW_RECOMMENDED_MODELS_JSON;
+  delete process.env.SILICONFLOW_ALLOW_CUSTOM_MODEL_WITH_SERVER_KEY;
+  vi.unstubAllGlobals();
   resetRateLimitForTests();
 });
 
@@ -183,5 +187,70 @@ describe("POST /api/rewrite", () => {
     expect(first.headers.get("X-RateLimit-Remaining")).toBe("0");
     expect(second.status).toBe(429);
     expect(Number(second.headers.get("Retry-After"))).toBeGreaterThan(0);
+  });
+
+  it("推荐 SiliconFlow 模型可用服务器 Key，结果标签包含实际模型且 Base URL 不可覆盖", async () => {
+    process.env.SILICONFLOW_API_KEY = "server-key";
+    process.env.SILICONFLOW_RECOMMENDED_MODELS_JSON = JSON.stringify([{
+      id: "vendor/recommended", label: "推荐", profile: "balanced", description: "测试",
+      strengths: [], cautions: [], benchmarkStatus: "verified",
+    }]);
+    const content = "事实停在原文给出的边界里，没有新的场景替它作证。感受仍然可以被听见，却不再冒充结论；叙述只沿着已有信息展开，并把所有未经确认的猜测留在心里。";
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content }, finish_reason: "stop" }],
+    }), { headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await POST(makeRequest({
+      text: "我很累。",
+      style: "lyrical",
+      providers: [{ id: "siliconflow", label: "伪造标签", model: "vendor/recommended", baseUrl: "https://evil.example/v1" }],
+    }));
+    expect(response.status).toBe(200);
+    const events = await readEvents(response);
+    expect(events[0]).toMatchObject({ type: "provider_start", label: "SiliconFlow · recommended" });
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://api.siliconflow.cn/v1/chat/completions");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).model).toBe("vendor/recommended");
+  });
+
+  it("自定义 SiliconFlow 模型无临时 Key 时拒绝，带 Key 时可调用", async () => {
+    process.env.SILICONFLOW_API_KEY = "server-key";
+    const denied = await POST(makeRequest({
+      ...baseRequest,
+      providers: [{ id: "siliconflow", label: "SiliconFlow", model: "vendor/custom" }],
+    }));
+    expect(denied.status).toBe(400);
+    await expect(denied.json()).resolves.toMatchObject({ error: expect.stringContaining("请填写你自己的临时 API Key") });
+
+    const content = "事实停在原文给出的边界里，没有新的场景替它作证。感受仍然可以被听见，却不再冒充结论；叙述只沿着已有信息展开，并把所有未经确认的猜测留在心里。";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content }, finish_reason: "stop" }],
+    }), { headers: { "content-type": "application/json" } })));
+    const allowed = await POST(makeRequest({
+      text: "我很累。",
+      style: "lyrical",
+      providers: [{ id: "siliconflow", label: "SiliconFlow", model: "vendor/custom", apiKey: "user-key" }],
+    }));
+    expect(allowed.status).toBe(200);
+  });
+
+  it("管理员显式开启后 API 允许自定义模型使用服务器 Key，并拒绝 URL 模型 ID", async () => {
+    process.env.SILICONFLOW_API_KEY = "server-key";
+    process.env.SILICONFLOW_ALLOW_CUSTOM_MODEL_WITH_SERVER_KEY = "true";
+    const content = "事实停在原文给出的边界里，没有新的场景替它作证。感受仍然可以被听见，却不再冒充结论；叙述只沿着已有信息展开，并把所有未经确认的猜测留在心里。";
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content }, finish_reason: "stop" }],
+    }), { headers: { "content-type": "application/json" } })));
+    const allowed = await POST(makeRequest({
+      text: "我很累。",
+      style: "lyrical",
+      providers: [{ id: "siliconflow", label: "SiliconFlow", model: "vendor/custom" }],
+    }));
+    expect(allowed.status).toBe(200);
+
+    const invalid = await POST(makeRequest({
+      ...baseRequest,
+      providers: [{ id: "siliconflow", label: "SiliconFlow", model: "https://evil.example/model", apiKey: "user-key" }],
+    }));
+    expect(invalid.status).toBe(400);
   });
 });

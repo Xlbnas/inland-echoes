@@ -31,12 +31,28 @@ describe("rewrite prompts", () => {
   it("关闭判定时不再构造选中频道和 outcome", () => {
     const inner = buildRewriteMessages("今天下雨。", "inner_monologue");
     const noir = buildRewriteMessages("今天下雨。", "psycho_noir");
-    expect(inner[1].content).not.toContain("<selected_channel>");
-    expect(inner[1].content).not.toContain("<outcome>");
-    expect(inner[1].content).not.toContain("【逻辑：通过】");
+    const innerRequest = inner[1].content.split("以下输入—输出对")[0];
+    expect(innerRequest).not.toContain("<selected_channel>");
+    expect(innerRequest).not.toContain("<outcome>");
+    expect(innerRequest).not.toContain("【逻辑：通过】");
     expect(inner[1].content).toContain("使用 2–4 个不同");
     expect(noir[1].content).toContain("可以完全不用频道标签");
   });
+
+  it("Few-shot 是包含来源和事实边界的输入输出对", () => {
+    const content = buildRewriteMessages("我害怕。", "inner_monologue", check)[1].content;
+    expect(content).toContain("<example");
+    expect(content).toContain("<source_text>");
+    expect(content).toContain("<allowed_facts>");
+    expect(content).toContain("<forbidden_additions>");
+    expect(content).toContain("<output>");
+    expect(content.match(/<example /gu)?.length).toBeLessThanOrEqual(2);
+  });
+
+  it.each(["psycho_noir", "dark_humor", "inner_monologue", "lyrical"] as const)(
+    "%s 有独立风格合同",
+    (style) => expect(buildRewriteMessages("我很累。", style)[1].content).toContain(`style id="${style}"`),
+  );
 
   it("转义五种 XML 特殊字符", () => {
     expect(escapePromptXml("& < > \" '")).toBe("&amp; &lt; &gt; &quot; &apos;");

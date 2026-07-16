@@ -10,12 +10,13 @@
 - 多供应商并行流式输出（NDJSON）
 - DeepSeek、通义千问、OpenAI、SiliconFlow 内置配置
 - 默认关闭的自定义 OpenAI 兼容接口地址、模型和临时接口密钥
-- 本地确定性模拟服务，无需任何接口密钥即可开发和自动测试
+- 本地确定性结构演示，无需任何接口密钥即可开发和自动测试；不代表真实模型文学质量，也不参与模型推荐
 - 按供应商数量、文本长度和判定成本加权的 Redis 限流；Redis 不可用时自动退回有界进程内限流
 - 自定义供应商 URL 的 DNS 校验、连接地址绑定、重定向拒绝和响应体限制
 - 响应式界面、键盘焦点、完整减少动效模式
 - 统一的“档案 / 信号 / 压印”动效系统；远端增量进入独立 Unicode 打字队列，不为每个字符创建 DOM 节点
 - 结构化 system/user 提示词、分长度合同、认知频道/判定结果质量校验与一次定向修复
+- 闭世界事实边界、确定性数字/日期/时间/金额/百分比/引语锚点，以及默认关闭的独立事实审计器
 - 上游鉴权、限流、超时、不可用、空响应、截断与质量失败的稳定错误分类
 - 原创 SVG favicon 与 180×180 Apple Touch Icon
 - Docker 多阶段构建和 Docker Compose 一键启动
@@ -115,6 +116,28 @@ docker inspect --format '{{json .State.Health}}' inland-echoes
 | SiliconFlow | `SILICONFLOW_API_KEY` | `SILICONFLOW_BASE_URL` | `deepseek-ai/DeepSeek-V4-Flash` |
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_BASE_URL` | `gpt-5.6-luna` |
 
+### SiliconFlow 模型选择
+
+SiliconFlow 使用固定的内置接口地址，但允许在页面选择两种模型来源：
+
+- 系统推荐：来自服务端维护的推荐目录，可以使用部署服务器 Key 或用户临时 Key。
+- 自定义模型 ID：仍调用内置 SiliconFlow 地址，不属于“自定义供应商”，也不受 `CUSTOM_PROVIDERS_ENABLED` 控制。
+
+服务端会根据 `modelId` 是否在推荐白名单中重新判定来源，不信任客户端声明。自定义模型 ID 默认必须使用用户自己的临时 Key；只有管理员明确设置 `SILICONFLOW_ALLOW_CUSTOM_MODEL_WITH_SERVER_KEY=true` 才能消耗服务器 Key。临时 Key 只存在当前页面内存，不进入 localStorage、URL、日志、响应或基准报告。
+
+推荐目录可通过 `SILICONFLOW_RECOMMENDED_MODELS_JSON` 配置并由 Zod 校验。配置为空或非法时，应用安全回退到 `SILICONFLOW_MODEL`，并把它标记为“待验证候选”，不会冒充已完成项目实测。系统推荐来自本项目自己的完整基准，不是 SiliconFlow 官方排名；平台模型可用性随时可能变化。
+
+示例：
+
+```dotenv
+SILICONFLOW_RECOMMENDED_MODELS_JSON=[{"id":"vendor/model","label":"综合候选","profile":"balanced","description":"项目完整基准确认","strengths":["事实保真稳定"],"cautions":["响应较慢"],"benchmarkStatus":"verified","verifiedAt":"2026-07-15T00:00:00.000Z"}]
+SILICONFLOW_ALLOW_CUSTOM_MODEL_WITH_SERVER_KEY=false
+SILICONFLOW_AUDIT_MODEL=
+REWRITE_FACT_AUDIT_ENABLED=false
+```
+
+事实审计默认关闭，避免未经评估直接增加生产费用。开启后，生成仍最多只修复一次；审计服务失败不会被报告成正文生成失败。
+
 ### 自定义线路安全
 
 自定义线路默认关闭。只有明确设置以下变量时，页面才显示自定义线路入口，服务端才接受未知供应商 ID：
@@ -194,27 +217,33 @@ docker compose -p inland-echoes-verify down --remove-orphans
 
 ### SiliconFlow 生产质量基准
 
-基准直接复用生产 `buildRewriteMessages`、长度合同、质量校验、定向修复和生成参数。固定矩阵包含 12 个案例，每例 3 次（36 次真实生成），覆盖 1–1000 字、四种判定结果、六个认知频道和四种风格，并由 `SILICONFLOW_JUDGE_MODEL` 独立评审。并发固定为 2；报告保存正文、延迟、修复情况、违规项和评分，但不记录请求头或接口密钥。
+基准直接复用生产 Prompt、长度合同、质量校验、事实审计、定向修复和生成参数。固定矩阵包含 22 个原创、人工编写、非私人案例，覆盖 2–1000 字、四种判定结果、六个认知频道、四种风格、注入/XML/换行/中英混合/数字/引语等边界。长文本是独立自然叙述，不使用 `repeat` 或 `slice` 拼接。
+
+先查询候选是否仍存在：
 
 ```bash
-npm run benchmark:siliconflow:quality
+npm run siliconflow:models
 ```
 
-密钥只从 `SILICONFLOW_API_KEY` 读取；可用 `SILICONFLOW_JUDGE_MODEL` 指定独立评审模型。报告生成在已被忽略的 `benchmark-results/`。
+该命令只在显式运行时访问上游，脱敏快照写入已被 Git 忽略的 `benchmark-results/model-snapshots/`；查询失败不会影响应用启动。
 
-2026-07-15 对默认 `deepseek-ai/DeepSeek-V4-Flash` 完成 36 次全量实测：
+快速横向测试：
 
-| 指标 | 结果 | 验收门槛 |
-| --- | ---: | ---: |
-| 请求成功 / 本地合同通过 | 15 / 36（41.67%） | ≥ 95% / 100% |
-| 平均事实保真 | 6.07 / 10 | ≥ 9.0 |
-| 平均结果对齐 | 9.20 / 10 | ≥ 8.5 |
-| 平均频道结构 | 8.33 / 10 | ≥ 8.5 |
-| 平均心理对白感 | 6.67 / 10 | ≥ 8.0 |
-| 严重事实发明 | 2 | 0 |
-| 成功结果中触发修复 | 6 / 15 | 仅作观测 |
+```bash
+npm run benchmark:siliconflow:quality -- --models=deepseek-ai/DeepSeek-V4-Flash,Qwen/Qwen3.5-35B-A3B --runs=1
+```
 
-失败分类为 12 次 `quality_contract_failed`、8 次 `upstream_timeout` 和 1 次 `upstream_unavailable`。由于未达到严格门槛，生产“本地演示”线路仍保留，不能把该模型视为已验证的默认生产替代；后续应优先提高事实边界遵循、短文本长度稳定性和超长文本可用性，再完整重跑 36 次基准。
+完整推荐矩阵至少运行 20 个案例 × 每模型 3 次：
+
+```bash
+npm run benchmark:siliconflow:quality -- --models=<候选模型列表> --runs=3
+```
+
+密钥只从 `SILICONFLOW_API_KEY` 读取；可用 `SILICONFLOW_JUDGE_MODEL` 指定独立评审模型，`SILICONFLOW_BENCHMARK_AUDIT=true` 可强制启用事实审计。为避免上游长请求污染同账户的后续模型，默认全局并发和每模型并发均为 1；可用 `SILICONFLOW_BENCHMARK_CONCURRENCY` 与 `SILICONFLOW_BENCHMARK_PER_MODEL_CONCURRENCY` 调整，但脚本把全局并发硬限制在 2 以内。基准会产生真实费用，请先确认账户预算。
+
+报告分别记录 `generationStatus`、`localValidationStatus`、`auditStatus` 和 `judgeStatus`。Judge 超时或非法 JSON 不会覆盖正文生成状态；“仅成功平均分”和“全部请求综合分”同时展示，后者把生成失败、最终合同失败、Judge 失败及严重事实发明计为 0，避免幸存者偏差。报告、正文、模型快照和候选推荐文件都位于已被忽略的 `benchmark-results/`，基准不会自动改写生产推荐目录。
+
+当前静态目录只把部署默认模型列为“待验证候选”，尚未据第二轮完整多模型基准宣称任何模型为正式推荐。本地演示继续保留，仅用于结构展示和自动测试。
 
 ## 隐私与部署提示
 

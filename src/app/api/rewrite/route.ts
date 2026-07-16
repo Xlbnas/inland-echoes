@@ -6,6 +6,7 @@ import {
 import { rollCheck } from "@/lib/checks";
 import {
   ProviderConfigurationError,
+  getProviderResultLabel,
   validateProviderRequests,
 } from "@/lib/provider-config";
 import { publicProviderError, streamProviderRewrite } from "@/lib/provider-stream";
@@ -57,7 +58,7 @@ export async function POST(request: Request) {
             send({
               type: "provider_start",
               providerId: provider.id,
-              label: provider.label,
+              label: getProviderResultLabel(provider),
             });
             try {
               for await (const delta of streamProviderRewrite(

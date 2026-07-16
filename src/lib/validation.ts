@@ -5,6 +5,7 @@ import {
   DEFAULT_CHECK_REQUEST,
 } from "./checks-shared";
 import { STYLE_IDS } from "./types";
+import { isValidSiliconFlowModelId } from "./siliconflow-models";
 
 export const providerRequestSchema = z.object({
   id: z.string().trim().min(1).max(64),
@@ -12,6 +13,14 @@ export const providerRequestSchema = z.object({
   apiKey: z.string().trim().max(512).optional(),
   baseUrl: z.string().trim().max(500).optional(),
   model: z.string().trim().max(120).optional(),
+}).superRefine((provider, context) => {
+  if (provider.id === "siliconflow" && provider.model && !isValidSiliconFlowModelId(provider.model)) {
+    context.addIssue({
+      code: "custom",
+      path: ["model"],
+      message: "SiliconFlow 模型 ID 格式无效",
+    });
+  }
 });
 
 export const checkRequestSchema = z

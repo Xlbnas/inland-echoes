@@ -68,6 +68,13 @@ export function useRewriteStream() {
     setDiceState("idle");
   }, []);
 
+  const clearResults = useCallback(() => {
+    if (activeRef.current) return;
+    setOutputs({});
+    setResultOrder([]);
+    setError("");
+  }, []);
+
   const processEvent = useCallback((event: RewriteEvent) => {
     if (event.type === "check_resolved") {
       pendingResultRef.current = event.result;
@@ -79,7 +86,7 @@ export function useRewriteStream() {
   }, [applyProviderEvent, revealPendingResult]);
 
   const generate = useCallback(async ({ text, style, providers, check }: { text: string; style: StyleId; providers: ProviderRequest[]; check: CheckRequest }) => {
-    if (activeRef.current || Object.values(outputs).some((item) => item.status === "streaming")) return;
+    if (activeRef.current) return;
     activeRef.current = true;
     generationRef.current += 1;
     const generation = generationRef.current;
@@ -118,7 +125,7 @@ export function useRewriteStream() {
     } finally {
       revealPromiseRef.current = null; abortRef.current = null; setNetworkActive(false); activeRef.current = false;
     }
-  }, [clearCheckResult, outputs, processEvent, revealPendingResult]);
+  }, [clearCheckResult, processEvent, revealPendingResult]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
@@ -128,5 +135,5 @@ export function useRewriteStream() {
   }, [revealPendingResult]);
 
   const isGenerating = useMemo(() => networkActive || Object.values(outputs).some((item) => item.status === "streaming"), [networkActive, outputs]);
-  return { outputs, resultOrder, isGenerating, error, setError, checkResult, diceState, generate, stop, clearCheckResult, markDisplayDone };
+  return { outputs, resultOrder, isGenerating, error, setError, checkResult, diceState, generate, stop, clearCheckResult, clearResults, markDisplayDone };
 }

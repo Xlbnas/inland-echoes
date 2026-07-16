@@ -1,4 +1,5 @@
 import type { CheckResult } from "./checks-shared";
+import type { RecommendedSiliconFlowModel } from "./siliconflow-models";
 
 export const STYLE_IDS = [
   "psycho_noir",
@@ -16,6 +17,12 @@ export type PublicProvider = {
   configured: boolean;
   builtin: boolean;
   note: string;
+  capabilities?: {
+    selectableModel?: boolean;
+    customModelAllowed?: boolean;
+    customModelRequiresUserKey?: boolean;
+    recommendedModels?: RecommendedSiliconFlowModel[];
+  };
 };
 
 export type ProviderCapabilities = {

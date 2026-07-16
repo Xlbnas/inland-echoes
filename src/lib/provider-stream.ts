@@ -10,6 +10,8 @@ import {
 } from "./safe-provider-fetch";
 import { UnsafeProviderTargetError } from "./safe-provider-url";
 import type { ProviderRequest, StyleId } from "./types";
+import { auditRewriteFidelity, fidelityAuditViolations } from "./fidelity-audit";
+import type { FidelityAuditResult } from "./fidelity-audit";
 
 export type RewriteErrorCode =
   | "auth_error" | "rate_limited" | "upstream_timeout" | "upstream_unavailable"
@@ -230,7 +232,22 @@ async function* yieldBufferedText(content: string) {
   for (let index = 0; index < chars.length; index += 24) yield chars.slice(index, index + 24).join("");
 }
 
-export type RewriteAttemptResult = { content: string; repaired: boolean; attempts: number; violations: string[] };
+export type RewriteAttemptResult = {
+  content: string;
+  repaired: boolean;
+  attempts: number;
+  violations: string[];
+  usage?: Record<string, number>;
+  audit?: FidelityAuditResult | null;
+};
+
+function mergeUsage(...items: Array<Record<string, number> | undefined>) {
+  const merged: Record<string, number> = {};
+  for (const item of items) {
+    for (const [key, value] of Object.entries(item || {})) merged[key] = (merged[key] || 0) + Number(value || 0);
+  }
+  return Object.keys(merged).length ? merged : undefined;
+}
 
 export async function generateValidatedRewrite(
   request: ProviderRequest,
@@ -267,10 +284,17 @@ export async function generateValidatedRewrite(
   const first = await requestCompletion(provider, buildRewriteMessages(text, style, check), maxTokens, 0.68, signal);
   if (!first.content) throw new RewriteProviderError("empty_response");
   const firstQuality = validateRewriteQuality(text, first.content, style, check, first.truncated);
-  if (firstQuality.valid) return { content: first.content, repaired: false, attempts: 1, violations: [] };
+  const firstAudit = await auditRewriteFidelity(text, first.content, signal);
+  const firstAuditViolations = fidelityAuditViolations(firstAudit);
+  if (firstQuality.valid && firstAuditViolations.length === 0) {
+    return { content: first.content, repaired: false, attempts: 1, violations: [], usage: first.usage, audit: firstAudit };
+  }
   if (signal.aborted) throw new RewriteProviderError("user_aborted");
 
-  const codes = firstQuality.violations.map((item) => `${item.code}: ${item.message}`);
+  const codes = [
+    ...firstQuality.violations.map((item) => `${item.code}: ${item.message}`),
+    ...firstAuditViolations,
+  ];
   const repaired = await requestCompletion(
     provider,
     buildRepairMessages(text, first.content, style, codes, check),
@@ -280,15 +304,27 @@ export async function generateValidatedRewrite(
   );
   if (!repaired.content) throw new RewriteProviderError("empty_response");
   const repairedQuality = validateRewriteQuality(text, repaired.content, style, check, repaired.truncated);
-  if (!repairedQuality.valid) {
-    const repairedCodes = repairedQuality.violations.map((item) => `${item.code}: ${item.message}`);
+  const repairedAudit = await auditRewriteFidelity(text, repaired.content, signal);
+  const repairedAuditViolations = fidelityAuditViolations(repairedAudit);
+  if (!repairedQuality.valid || repairedAuditViolations.length > 0) {
+    const repairedCodes = [
+      ...repairedQuality.violations.map((item) => `${item.code}: ${item.message}`),
+      ...repairedAuditViolations,
+    ];
     throw new RewriteProviderError(
       repaired.truncated ? "truncated_response" : "quality_contract_failed",
       false,
       { violations: repairedCodes, output: repaired.content },
     );
   }
-  return { content: repaired.content, repaired: true, attempts: 2, violations: codes };
+  return {
+    content: repaired.content,
+    repaired: true,
+    attempts: 2,
+    violations: codes,
+    usage: mergeUsage(first.usage, repaired.usage),
+    audit: repairedAudit,
+  };
 }
 
 export async function* streamProviderRewrite(

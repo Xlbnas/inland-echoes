@@ -267,3 +267,45 @@ test("has no horizontal page overflow", async ({ page }) => {
   const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(hasOverflow).toBe(false);
 });
+
+test("configures a trusted or custom SiliconFlow model and clears stale output", async ({ page }) => {
+  let submittedModel = "";
+  await page.route("**/api/rewrite", async (route) => {
+    const body = route.request().postDataJSON();
+    submittedModel = body.providers.find((provider: { id: string }) => provider.id === "siliconflow")?.model || "";
+    const label = `SiliconFlow · ${submittedModel.split("/").at(-1)}`;
+    const events = [
+      { type: "provider_start", providerId: "siliconflow", label },
+      { type: "provider_delta", providerId: "siliconflow", delta: "模型选择测试结果。" },
+      { type: "provider_done", providerId: "siliconflow" },
+    ];
+    await route.fulfill({ status: 200, contentType: "application/x-ndjson", body: `${events.map((event) => JSON.stringify(event)).join("\n")}\n` });
+  });
+
+  await page.goto("/");
+  await page.getByRole("checkbox", { name: /^SiliconFlow / }).check();
+  await page.getByRole("checkbox", { name: /^本地演示 / }).uncheck();
+  await expect(page.getByRole("heading", { name: "SiliconFlow 模型" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "系统推荐" })).toBeChecked();
+  await expect(page.locator(".model-card code")).toContainText("deepseek-ai/DeepSeek-V4-Flash");
+
+  await page.getByLabel("需要改写的原文").fill("第一轮结果。");
+  await page.getByRole("button", { name: "开始侧写" }).click();
+  await expect(page.locator('.result[data-state="done"]')).toBeVisible();
+
+  await page.getByRole("radio", { name: "自定义模型" }).click();
+  await expect(page.locator("article.result")).toHaveCount(0);
+  const modelInput = page.getByLabel("模型 ID");
+  await modelInput.fill("https://example.com/model");
+  await expect(modelInput).toHaveAttribute("aria-invalid", "true");
+  await modelInput.fill("vendor/custom-model");
+  await expect(page.getByText(/要求自定义模型使用你自己的临时 API Key/)).toBeVisible();
+  await page.getByLabel("SiliconFlow 临时密钥").fill("test-key");
+  await page.getByLabel("需要改写的原文").fill("第二轮结果。");
+  await page.getByRole("button", { name: "开始侧写" }).click();
+
+  expect(submittedModel).toBe("vendor/custom-model");
+  await expect(page.locator("article.result")).toContainText("SiliconFlow · custom-model");
+  await expect(page.locator("article.result")).toContainText("模型选择测试结果。");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+});

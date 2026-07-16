@@ -70,4 +70,14 @@ describe("rewriteRequestSchema", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("SiliconFlow 模型 ID 拒绝 URL、空白、查询串和路径回退", () => {
+    const base = { text: "今天下雨。", style: "lyrical", providers: [] as Array<Record<string, string>> };
+    for (const model of ["https://example.com/model", "model name", "vendor/model?x", "vendor/model#x", "vendor/../model"]) {
+      expect(rewriteRequestSchema.safeParse({
+        ...base,
+        providers: [{ id: "siliconflow", label: "SiliconFlow", model, apiKey: "test" }],
+      }).success).toBe(false);
+    }
+  });
 });

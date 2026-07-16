@@ -29,6 +29,10 @@ import {
   MOTION_DURATION,
 } from "@/lib/motion";
 import { STYLE_PRESETS } from "@/lib/styles";
+import {
+  isValidSiliconFlowModelId,
+  type SiliconFlowModelSelection,
+} from "@/lib/siliconflow-models";
 import type {
   ProviderRequest,
   ProviderCapabilities,
@@ -60,6 +64,13 @@ export function RewriterWorkbench({
   const [providers, setProviders] = useState<ClientProvider[]>(initialProviders);
   const [selectedIds, setSelectedIds] = useState<string[]>(["mock"]);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+  const siliconFlowProvider = initialProviders.find((provider) => provider.id === "siliconflow");
+  const recommendedModels = siliconFlowProvider?.capabilities?.recommendedModels ?? [];
+  const [siliconFlowMode, setSiliconFlowMode] = useState<SiliconFlowModelSelection["mode"]>("recommended");
+  const [recommendedModelId, setRecommendedModelId] = useState(
+    recommendedModels[0]?.id || siliconFlowProvider?.model || "",
+  );
+  const [customSiliconFlowModelId, setCustomSiliconFlowModelId] = useState("");
   const [check, setCheck] = useState<CheckRequest>(DEFAULT_CHECK_REQUEST);
   const [showCustom, setShowCustom] = useState(false);
   const [customLabel, setCustomLabel] = useState("");
@@ -80,6 +91,7 @@ export function RewriterWorkbench({
     generate: generateStream,
     stop,
     clearCheckResult,
+    clearResults,
     markDisplayDone,
   } = useRewriteStream();
 
@@ -96,6 +108,20 @@ export function RewriterWorkbench({
   );
 
   const selectedStyle = STYLE_PRESETS.find((preset) => preset.id === style)!;
+  const siliconFlowSelected = selectedIds.includes("siliconflow");
+  const activeSiliconFlowModel = siliconFlowMode === "recommended"
+    ? recommendedModelId
+    : customSiliconFlowModelId.trim();
+  const customSiliconFlowModelValid = isValidSiliconFlowModelId(customSiliconFlowModelId);
+  const customSiliconFlowRequiresUserKey =
+    siliconFlowProvider?.capabilities?.customModelRequiresUserKey !== false;
+
+  function changeSiliconFlowSelection(change: () => void) {
+    if (isGenerating) return;
+    change();
+    clearCheckResult();
+    clearResults();
+  }
 
   function toggleProvider(id: string) {
     setError("");
@@ -170,6 +196,16 @@ export function RewriterWorkbench({
       setError("先写下一段需要改写的文本");
       return;
     }
+    if (siliconFlowSelected && siliconFlowMode === "custom") {
+      if (!customSiliconFlowModelValid) {
+        setError("请输入有效的 SiliconFlow 模型 ID（不能是 URL、包含空白、?、# 或 ..）");
+        return;
+      }
+      if (customSiliconFlowRequiresUserKey && !apiKeys.siliconflow?.trim()) {
+        setError("使用自定义 SiliconFlow 模型时，请填写你自己的临时 API Key。");
+        return;
+      }
+    }
 
     const requests: ProviderRequest[] = selectedProviders
       .filter((provider) => provider.builtin || capabilities.customProvidersEnabled)
@@ -178,7 +214,7 @@ export function RewriterWorkbench({
         label: provider.label,
         apiKey: provider.apiKey || apiKeys[provider.id] || undefined,
         baseUrl: provider.baseUrl,
-        model: provider.model,
+        model: provider.id === "siliconflow" ? activeSiliconFlowModel : provider.model,
       }));
 
     await generateStream({ text: source, style, providers: requests, check });
@@ -312,7 +348,7 @@ export function RewriterWorkbench({
                       <span className="provider-check" aria-hidden="true" />
                       <span>
                         <b>{provider.label}</b>
-                        <small>{provider.model}</small>
+                        <small>{provider.id === "siliconflow" ? activeSiliconFlowModel : provider.model}</small>
                       </span>
                     </label>
                     {!provider.builtin ? (
@@ -335,6 +371,83 @@ export function RewriterWorkbench({
             </div>
           </m.div>
         </m.section>
+
+        {siliconFlowSelected && siliconFlowProvider?.capabilities?.selectableModel ? (
+          <section className="siliconflow-model-config" aria-labelledby="siliconflow-model-heading">
+            <div className="model-config-heading">
+              <div>
+                <span className="control-label">模型配置</span>
+                <h2 id="siliconflow-model-heading">SiliconFlow 模型</h2>
+              </div>
+              <div className="model-mode" role="radiogroup" aria-label="SiliconFlow 模型来源">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={siliconFlowMode === "recommended"}
+                  className={siliconFlowMode === "recommended" ? "selected" : ""}
+                  disabled={isGenerating}
+                  onClick={() => changeSiliconFlowSelection(() => setSiliconFlowMode("recommended"))}
+                >系统推荐</button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={siliconFlowMode === "custom"}
+                  className={siliconFlowMode === "custom" ? "selected" : ""}
+                  disabled={isGenerating}
+                  onClick={() => changeSiliconFlowSelection(() => setSiliconFlowMode("custom"))}
+                >自定义模型</button>
+              </div>
+            </div>
+
+            {siliconFlowMode === "recommended" ? (
+              <div className="recommended-models" role="radiogroup" aria-label="系统推荐模型">
+                {recommendedModels.map((model) => (
+                  <button
+                    key={model.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={recommendedModelId === model.id}
+                    className={recommendedModelId === model.id ? "model-card selected" : "model-card"}
+                    disabled={isGenerating}
+                    onClick={() => changeSiliconFlowSelection(() => setRecommendedModelId(model.id))}
+                  >
+                    <span><b>{model.label}</b><i>{model.benchmarkStatus === "verified" ? "项目实测" : "待验证"}</i></span>
+                    <code>{model.id}</code>
+                    <p>{model.description}</p>
+                    {model.cautions[0] ? <small>限制：{model.cautions[0]}</small> : null}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="custom-model-fields">
+                <label htmlFor="siliconflow-custom-model">
+                  <span>模型 ID</span>
+                  <input
+                    id="siliconflow-custom-model"
+                    value={customSiliconFlowModelId}
+                    onChange={(event) => changeSiliconFlowSelection(() => setCustomSiliconFlowModelId(event.target.value))}
+                    placeholder="deepseek-ai/DeepSeek-V4-Flash"
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={isGenerating}
+                    aria-invalid={Boolean(customSiliconFlowModelId) && !customSiliconFlowModelValid}
+                    aria-describedby="siliconflow-model-help"
+                  />
+                </label>
+                <p id="siliconflow-model-help" className={!customSiliconFlowModelId || customSiliconFlowModelValid ? "field-help" : "field-help error"}>
+                  {customSiliconFlowModelId && !customSiliconFlowModelValid
+                    ? "仅允许字母、数字及 . _ : / -，不能是 URL、包含空白、?、# 或 ..。"
+                    : "仍使用内置 SiliconFlow 地址；模型 ID 不会绕过自定义线路安全规则。"}
+                </p>
+                <p className="provider-security-note">
+                  {customSiliconFlowRequiresUserKey
+                    ? "此部署要求自定义模型使用你自己的临时 API Key；密钥只保存在当前页面内存。"
+                    : "此部署允许自定义模型使用服务器 Key；你也可以填写自己的临时 Key。"}
+                </p>
+              </div>
+            )}
+          </section>
+        ) : null}
 
         <AnimatePresence initial={false}>
           {capabilities.customProvidersEnabled && showCustom ? (
@@ -372,10 +485,17 @@ export function RewriterWorkbench({
           ) : null}
         </AnimatePresence>
 
-        {selectedProviders.some((provider) => !provider.configured && provider.builtin) ? (
+        {selectedProviders.some((provider) =>
+          provider.builtin && provider.id !== "mock" && (
+            !provider.configured ||
+            (provider.id === "siliconflow" && siliconFlowMode === "custom" && customSiliconFlowRequiresUserKey)
+          )) ? (
           <section className="credential-row" aria-label="临时 API 密钥">
             {selectedProviders
-              .filter((provider) => !provider.configured && provider.id !== "mock")
+              .filter((provider) => provider.id !== "mock" && (
+                !provider.configured ||
+                (provider.id === "siliconflow" && siliconFlowMode === "custom" && customSiliconFlowRequiresUserKey)
+              ))
               .map((provider) => (
                 <label key={provider.id}>
                   <span>{provider.label} 临时密钥</span>

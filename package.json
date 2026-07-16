@@ -14,6 +14,7 @@
     "test:e2e": "playwright test",
     "benchmark:siliconflow": "node --use-env-proxy --env-file-if-exists=.env.local --import tsx scripts/benchmark-siliconflow-quality.ts",
     "benchmark:siliconflow:quality": "node --use-env-proxy --env-file-if-exists=.env.local --import tsx scripts/benchmark-siliconflow-quality.ts",
+    "siliconflow:models": "node --use-env-proxy --env-file-if-exists=.env.local --import tsx scripts/list-siliconflow-models.ts",
     "check": "npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {

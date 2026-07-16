@@ -4,6 +4,12 @@ import type {
   PublicProvider,
 } from "./types";
 import { validateSafeProviderUrl } from "./safe-provider-url";
+import {
+  getSelectableSiliconFlowModels,
+  isRecommendedSiliconFlowModel,
+  isValidSiliconFlowModelId,
+  siliconFlowModelShortName,
+} from "./siliconflow-models";
 
 type ProviderConfig = {
   id: string;
@@ -15,7 +21,8 @@ type ProviderConfig = {
   custom: boolean;
 };
 
-const builtinProviders = {
+function getBuiltinProviders() {
+  return {
   mock: {
     id: "mock",
     label: "本地演示",
@@ -59,7 +66,8 @@ const builtinProviders = {
     apiKey: process.env.OPENAI_API_KEY || "",
     custom: false,
   },
-} satisfies Record<string, ProviderConfig>;
+  } satisfies Record<string, ProviderConfig>;
+}
 
 export class ProviderConfigurationError extends Error {
   constructor(message: string) {
@@ -75,6 +83,7 @@ export function getProviderCapabilities(): ProviderCapabilities {
 }
 
 export function getPublicProviderCatalog(): PublicProvider[] {
+  const builtinProviders = getBuiltinProviders();
   return [
     {
       id: "mock",
@@ -82,7 +91,7 @@ export function getPublicProviderCatalog(): PublicProvider[] {
       model: builtinProviders.mock.model,
       configured: true,
       builtin: true,
-      note: "无需密钥，用于体验和自动测试",
+      note: "确定性结构示例，不代表真实模型文学质量",
     },
     {
       id: "deepseek",
@@ -106,7 +115,14 @@ export function getPublicProviderCatalog(): PublicProvider[] {
       model: builtinProviders.siliconflow.model,
       configured: Boolean(builtinProviders.siliconflow.apiKey),
       builtin: true,
-      note: "实测推荐：低成本多模型聚合接口",
+      note: "可选择项目基准候选，或填写自己的模型 ID",
+      capabilities: {
+        selectableModel: true,
+        customModelAllowed: true,
+        customModelRequiresUserKey:
+          process.env.SILICONFLOW_ALLOW_CUSTOM_MODEL_WITH_SERVER_KEY !== "true",
+        recommendedModels: getSelectableSiliconFlowModels(),
+      },
     },
     {
       id: "openai",
@@ -120,8 +136,24 @@ export function getPublicProviderCatalog(): PublicProvider[] {
 }
 
 export function resolveProvider(request: ProviderRequest): ProviderConfig {
+  const builtinProviders = getBuiltinProviders();
   const builtin = builtinProviders[request.id as keyof typeof builtinProviders];
   if (builtin) {
+    if (builtin.id === "mock") return builtin;
+    if (builtin.id === "siliconflow") {
+      const model = request.model?.trim() || builtin.model;
+      if (!isValidSiliconFlowModelId(model)) {
+        throw new ProviderConfigurationError("SiliconFlow 模型 ID 格式无效");
+      }
+      const recommended = isRecommendedSiliconFlowModel(model);
+      const allowServerKey = process.env.SILICONFLOW_ALLOW_CUSTOM_MODEL_WITH_SERVER_KEY === "true";
+      if (!recommended && !request.apiKey && !allowServerKey) {
+        throw new ProviderConfigurationError("使用自定义 SiliconFlow 模型时，请填写你自己的临时 API Key。");
+      }
+      const apiKey = request.apiKey || builtin.apiKey;
+      if (!apiKey) throw new ProviderConfigurationError(`${builtin.label} 尚未配置 API Key`);
+      return { ...builtin, model, apiKey };
+    }
     const apiKey = request.apiKey || builtin.apiKey;
     if (!apiKey) {
       throw new ProviderConfigurationError(`${builtin.label} 尚未配置 API Key`);
@@ -145,6 +177,14 @@ export function resolveProvider(request: ProviderRequest): ProviderConfig {
     apiKey: request.apiKey,
     custom: true,
   };
+}
+
+export function getProviderResultLabel(request: ProviderRequest) {
+  const provider = resolveProvider(request);
+  if (provider.id === "siliconflow") {
+    return `${provider.label} · ${siliconFlowModelShortName(provider.model)}`;
+  }
+  return request.label;
 }
 
 export function validateProviderRequests(requests: ProviderRequest[]) {

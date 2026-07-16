@@ -16,11 +16,16 @@ const json = (content: string, finishReason = "stop") => new Response(
 afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.CUSTOM_PROVIDERS_ENABLED;
+  delete process.env.SILICONFLOW_RECOMMENDED_MODELS_JSON;
+  delete process.env.SILICONFLOW_ALLOW_CUSTOM_MODEL_WITH_SERVER_KEY;
+  delete process.env.REWRITE_FACT_AUDIT_ENABLED;
+  delete process.env.SILICONFLOW_AUDIT_MODEL;
+  delete process.env.SILICONFLOW_API_KEY;
 });
 
 describe("generateValidatedRewrite", () => {
   it("向 SiliconFlow 发送稳定消息并关闭 thinking", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(json(valid));
+    const fetchMock = vi.fn().mockImplementation(async () => json(valid));
     vi.stubGlobal("fetch", fetchMock);
     await generateValidatedRewrite(
       { id: "siliconflow", label: "SiliconFlow", apiKey: "test-key" },
@@ -32,7 +37,7 @@ describe("generateValidatedRewrite", () => {
     expect(body.messages.map((item: { role: string }) => item.role)).toEqual(["system", "user"]);
     expect(body.enable_thinking).toBe(false);
     expect(body.temperature).toBe(0.68);
-    expect(body.messages[1].content).not.toContain("<outcome>");
+    expect(body.messages[1].content.split("以下输入—输出对")[0]).not.toContain("<outcome>");
   });
 
   it("用低温完成一次定向修复", async () => {
@@ -48,6 +53,25 @@ describe("generateValidatedRewrite", () => {
     const second = JSON.parse(String(fetchMock.mock.calls[1][1]?.body));
     expect(second.temperature).toBe(0.25);
     expect(second.messages[1].content).toContain("<repair_request>");
+  });
+
+  it("推荐与自定义模型 ID 都真正传入 SiliconFlow 上游", async () => {
+    process.env.SILICONFLOW_RECOMMENDED_MODELS_JSON = JSON.stringify([{
+      id: "vendor/recommended", label: "推荐", profile: "balanced", description: "测试",
+      strengths: [], cautions: [], benchmarkStatus: "verified",
+    }]);
+    const fetchMock = vi.fn().mockImplementation(async () => json(valid));
+    vi.stubGlobal("fetch", fetchMock);
+    await generateValidatedRewrite(
+      { id: "siliconflow", label: "SiliconFlow", model: "vendor/recommended", apiKey: "test-key" },
+      source, "lyrical", new AbortController().signal,
+    );
+    await generateValidatedRewrite(
+      { id: "siliconflow", label: "SiliconFlow", model: "vendor/custom", apiKey: "user-key" },
+      source, "lyrical", new AbortController().signal,
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).model).toBe("vendor/recommended");
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).model).toBe("vendor/custom");
   });
 
   it("鉴权失败不重试，400 分类为供应商请求无效", async () => {
@@ -96,6 +120,22 @@ describe("generateValidatedRewrite", () => {
         .toContain("too_short: 正文少于 70 字");
       expect(publicProviderError(error)).not.toHaveProperty("details");
     }
+  });
+
+  it("事实审计器返回非法 JSON 时不伪装成生成失败", async () => {
+    process.env.REWRITE_FACT_AUDIT_ENABLED = "true";
+    process.env.SILICONFLOW_AUDIT_MODEL = "vendor/auditor";
+    process.env.SILICONFLOW_API_KEY = "server-audit-key";
+    const fetchMock = vi.fn().mockImplementation(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      return body.model === "vendor/auditor"
+        ? json("not-json")
+        : json(valid);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(generateValidatedRewrite(request, source, "lyrical", new AbortController().signal))
+      .resolves.toMatchObject({ content: valid, attempts: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("调用方中止后不进入修复", async () => {
